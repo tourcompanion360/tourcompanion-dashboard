@@ -4,7 +4,7 @@ import path from "path";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
-  base: '/tourcompanion-dashboard/',
+  base: '/',
   server: {
     host: "::",
     port: 8080,
@@ -20,32 +20,17 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: "dist",
     sourcemap: mode === 'development',
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 3000,
+    minify: 'esbuild',
     rollupOptions: {
       output: {
         manualChunks: (id) => {
-          // Core React libraries
+          // Core React libraries - keep together for better caching
           if (id.includes('react') || id.includes('react-dom')) {
             return 'react-vendor';
           }
           
-          // Router
-          if (id.includes('react-router')) {
-            return 'router';
-          }
-          
-          // UI Components - split into smaller chunks
-          if (id.includes('@radix-ui')) {
-            if (id.includes('dialog') || id.includes('dropdown') || id.includes('select')) {
-              return 'ui-core';
-            }
-            if (id.includes('chart') || id.includes('tooltip') || id.includes('popover')) {
-              return 'ui-charts';
-            }
-            return 'ui-components';
-          }
-          
-          // Supabase
+          // Supabase - separate chunk
           if (id.includes('@supabase')) {
             return 'supabase';
           }
@@ -53,6 +38,11 @@ export default defineConfig(({ mode }) => ({
           // Charts and visualization - separate chunk for heavy library
           if (id.includes('recharts')) {
             return 'charts';
+          }
+          
+          // UI Components - group all Radix UI components together
+          if (id.includes('@radix-ui')) {
+            return 'ui-components';
           }
           
           // Query management
@@ -65,7 +55,12 @@ export default defineConfig(({ mode }) => ({
             return 'forms';
           }
           
-          // Utilities
+          // Router
+          if (id.includes('react-router')) {
+            return 'router';
+          }
+          
+          // Utilities - group smaller libraries
           if (id.includes('lucide-react') || id.includes('date-fns') || id.includes('clsx') || id.includes('tailwind-merge')) {
             return 'utils';
           }

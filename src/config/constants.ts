@@ -71,6 +71,9 @@ export const ROUTES = {
   notFound: '*',
 } as const;
 
+// Base URL for the application
+export const BASE_URL = '';
+
 // Local Storage Keys
 export const STORAGE_KEYS = {
   theme: 'tourcompanion-theme',

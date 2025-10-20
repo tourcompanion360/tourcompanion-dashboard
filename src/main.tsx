@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { runDeploymentDiagnostics } from './utils/deploymentDiagnostics'
 
 // Simple test to see if React is working
 console.log('🚀 Main.tsx loaded successfully');
@@ -44,6 +45,9 @@ if (import.meta.env.PROD) {
     }).catch(() => {});
   }
 }
+
+// Run deployment diagnostics
+runDeploymentDiagnostics();
 
 // Try to render the app with error handling
 try {

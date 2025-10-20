@@ -9,6 +9,7 @@
     "dev:backend": "node --loader ts-node/esm src/backend/index.js",
     "dev:full": "concurrently \"npm run dev:backend\" \"npm run dev\"",
     "build": "vite build",
+    "build:prod": "cross-env NODE_ENV=production vite build",
     "build:dev": "vite build --mode development",
     "build:backend": "tsc --project tsconfig.backend.json",
     "build:full": "npm run build:backend && npm run build",
@@ -50,6 +51,7 @@
     "vercel:build": "vercel build",
     "vercel:deploy": "vercel --prod",
     "deploy": "npm run build && gh-pages -d dist",
+    "deploy:github": "npm run build && gh-pages -d dist",
     "predeploy": "npm run build"
   },
   "dependencies": {
@@ -136,6 +138,7 @@
     "audit-ci": "^7.1.0",
     "autoprefixer": "^10.4.21",
     "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
     "eslint": "^9.32.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",

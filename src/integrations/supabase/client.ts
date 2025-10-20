@@ -18,35 +18,76 @@ if (import.meta.env.DEV) {
   });
 }
 
-// Validate required environment variables
+// Validate required environment variables with fallback
+let supabaseClient: any;
+
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('Missing required Supabase environment variables. Please check your .env file.');
-  throw new Error('Missing required Supabase environment variables. Please check your .env file.');
+  console.error('❌ Missing required Supabase environment variables.');
+  console.error('🔧 Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your deployment environment.');
+  console.error('📖 See DEPLOYMENT_ENVIRONMENT_SETUP.md for instructions.');
+  
+  // Use fallback values for deployment
+  const fallbackUrl = 'https://yrvicwapjsevyilxdzsm.supabase.co';
+  const fallbackKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlydmljd2FwanNldnlpbHhkenNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAwMDY2ODIsImV4cCI6MjA3NTU4MjY4Mn0.tRhpswJI2CccGdWX3fcJEowSA9IBh-KMYHfaiKVjN7c';
+  
+  console.warn('⚠️ Using fallback Supabase configuration for deployment.');
+  
+  // Use fallback values
+  const SUPABASE_URL_FINAL = SUPABASE_URL || fallbackUrl;
+  const SUPABASE_ANON_KEY_FINAL = SUPABASE_ANON_KEY || fallbackKey;
+  
+  // Create client with fallback values
+  supabaseClient = createClient<Database>(
+    SUPABASE_URL_FINAL,
+    SUPABASE_ANON_KEY_FINAL,
+    {
+      auth: {
+        storage: localStorage,
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+      realtime: {
+        params: {
+          eventsPerSecond: 10,
+        },
+      },
+      global: {
+        headers: {
+          'X-Client-Info': `tourcompanion-${import.meta.env.VITE_APP_VERSION || '1.0.0'}`,
+        },
+      },
+    }
+  );
+} else {
+  // Create Supabase client with validated configuration
+  supabaseClient = createClient<Database>(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY,
+    {
+      auth: {
+        storage: localStorage,
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+      realtime: {
+        params: {
+          eventsPerSecond: 10,
+        },
+      },
+      global: {
+        headers: {
+          'X-Client-Info': `tourcompanion-${import.meta.env.VITE_APP_VERSION || '1.0.0'}`,
+        },
+      },
+    }
+  );
 }
 
-// Create Supabase client with configuration
-export const supabase = createClient<Database>(
-  SUPABASE_URL,
-  SUPABASE_ANON_KEY,
-  {
-    auth: {
-      storage: localStorage,
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-    },
-    realtime: {
-      params: {
-        eventsPerSecond: 10,
-      },
-    },
-    global: {
-      headers: {
-        'X-Client-Info': `tourcompanion-${import.meta.env.VITE_APP_VERSION || '1.0.0'}`,
-      },
-    },
-  }
-);
+// Export the client
+export const supabase = supabaseClient;
+
 
 // Log connection info in development (URL sanitized for security)
 if (import.meta.env.DEV) {
