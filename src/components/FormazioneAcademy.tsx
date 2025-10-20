@@ -149,7 +149,7 @@ const FormazioneAcademy = () => {
         <CardContent>
           <div className="border rounded-lg overflow-hidden hover:shadow-lg transition-shadow max-w-md">
             <div className="relative">
-              <img src="/lovable-uploads/8d9c89d5-3c52-4ee8-997b-874e8784f081.png" alt="Introduzione ai Tour Virtuali" className="w-full h-48 object-cover" />
+              <img src="/assets/images/tour-introduction.png" alt="Introduzione ai Tour Virtuali" className="w-full h-48 object-cover" />
               <div className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors cursor-pointer">
                 <PlayCircle className="h-16 w-16 text-white" />
               </div>

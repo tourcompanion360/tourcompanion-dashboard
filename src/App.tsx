@@ -1,103 +1,135 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import { AgencyProvider } from "@/contexts/AgencyContext";
-import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
-import Auth from "./pages/Auth";
-import ClientPortal from "./pages/ClientPortal";
-import AdminDashboard from "./pages/AdminDashboard";
-import TestClientPortal from "./pages/TestClientPortal";
+import { NotificationProvider } from "@/contexts/NotificationContext";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AdminRoute from "./components/AdminRoute";
+import DevModeBanner from "./components/DevModeBanner";
 
-const queryClient = new QueryClient();
+// Lazy load pages for better performance
+const Index = lazy(() => import("./pages/Index"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const Auth = lazy(() => import("./pages/Auth"));
+const ClientPortal = lazy(() => import("./pages/ClientPortal"));
+const Pricing = lazy(() => import("./pages/Pricing"));
+const Billing = lazy(() => import("./pages/Billing"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
+const TestClientPortal = lazy(() => import("./pages/TestClientPortalView"));
+const TestClientPortalView = lazy(() => import("./pages/TestClientPortalView"));
+const ClientDashboard = lazy(() => import("./pages/ClientDashboard"));
 
-// Simple error boundary to avoid full blank screens
-class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; message?: string }>{
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError(error: any) {
-    return { hasError: true, message: error?.message || 'Unexpected error' };
-  }
-  componentDidCatch(error: any, info: any) {
-    console.error('App crashed:', error, info);
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-background">
-          <div className="text-center">
-            <p className="text-red-500 mb-2">Something went wrong</p>
-            <p className="text-muted-foreground mb-4">{this.state.message}</p>
-            <button className="px-4 py-2 rounded bg-primary text-primary-foreground" onClick={() => window.location.reload()}>
-              Reload
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children as any;
-  }
-}
+// Query client is now imported from lib/queryClient.ts
+
+// Enhanced error boundary using our robust ErrorBoundary component
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <AppErrorBoundary>
+      <DevModeBanner />
+      <ErrorBoundary>
         <BrowserRouter>
           <AgencyProvider>
-            <Routes>
-              <Route path="/auth" element={<Auth />} />
-              <Route
-                path="/"
-                element={
-                  <ProtectedRoute>
-                    <Index />
-                  </ProtectedRoute>
-                }
-              />
-        <Route
-          path="/client/:projectId"
-          element={
-            <ProtectedRoute>
-              <ClientPortal />
-            </ProtectedRoute>
-          }
-        />
-        {/* Test route for client portal - bypasses magic link requirement */}
-        <Route
-          path="/test-client/:projectId"
-          element={<ClientPortal />}
-        />
-        <Route
-          path="/test-portal"
-          element={
-            <ProtectedRoute>
-              <TestClientPortal />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute>
-              <AdminDashboard />
-            </ProtectedRoute>
-          }
-        />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <NotificationProvider>
+              <Suspense fallback={
+                <div className="flex items-center justify-center min-h-screen">
+                  <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+                </div>
+              }>
+                <Routes>
+                  <Route path="/auth" element={<Auth />} />
+                  <Route
+                    path="/pricing"
+                    element={
+                      <ProtectedRoute requiredRole="creator">
+                        <Pricing />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/billing"
+                    element={
+                      <ProtectedRoute requiredRole="creator">
+                        <Billing />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/"
+                    element={
+                      <ErrorBoundary fallback={<div className="p-4 text-center">Dashboard Error - Please refresh the page</div>}>
+                        <ProtectedRoute>
+                          <Index />
+                        </ProtectedRoute>
+                      </ErrorBoundary>
+                    }
+                  />
+                  <Route
+                    path="/dashboard"
+                    element={
+                      <ErrorBoundary fallback={<div className="p-4 text-center">Dashboard Error - Please refresh the page</div>}>
+                        <ProtectedRoute>
+                          <Index />
+                        </ProtectedRoute>
+                      </ErrorBoundary>
+                    }
+                  />
+                  {/* Client dashboard - completely public, no authentication */}
+                  <Route
+                    path="/client/:projectId"
+                    element={<ClientDashboard />}
+                  />
+                  {/* Legacy dashboard route - redirects to main client route */}
+                  <Route
+                    path="/client/:projectId/dashboard"
+                    element={<ClientDashboard />}
+                  />
+                  {/* Test route for client portal - bypasses magic link requirement */}
+                  <Route
+                    path="/test-client/:projectId"
+                    element={<TestClientPortalView />}
+                  />
+                  <Route
+                    path="/test-portal"
+                    element={
+                      <ProtectedRoute>
+                        <TestClientPortal />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin"
+                    element={
+                      <ErrorBoundary fallback={<div className="p-4 text-center">Admin Panel Error - Please refresh the page</div>}>
+                        <AdminRoute>
+                          <AdminDashboard />
+                        </AdminRoute>
+                      </ErrorBoundary>
+                    }
+                  />
+                  <Route
+                    path="/portal/:projectId"
+                    element={
+                      <ProtectedRoute>
+                        <ClientPortal />
+                      </ProtectedRoute>
+                    }
+                  />
+                  {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
+            </NotificationProvider>
           </AgencyProvider>
         </BrowserRouter>
-      </AppErrorBoundary>
+      </ErrorBoundary>
     </TooltipProvider>
   </QueryClientProvider>
 );

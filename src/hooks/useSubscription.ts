@@ -24,9 +24,9 @@ interface SubscriptionData {
 
 const PLAN_FEATURES = {
   basic: {
-    maxChatbots: 2,
-    maxProjects: 5,
-    maxClients: 10,
+    maxChatbots: 0,
+    maxProjects: 1,
+    maxClients: 1,
     analyticsAccess: false,
     customBranding: false,
     apiAccess: false,
@@ -36,14 +36,14 @@ const PLAN_FEATURES = {
   pro: {
     maxChatbots: 5,
     maxProjects: 50,
-    maxClients: 100,
+    maxClients: -1, // unlimited
     analyticsAccess: true,
     customBranding: true,
     apiAccess: true,
     storage: 10, // GB
     apiCalls: 10000,
   },
-};
+} as const;
 
 export const useSubscription = (userId: string | null) => {
   const [subscription, setSubscription] = useState<SubscriptionData>({
@@ -87,11 +87,11 @@ export const useSubscription = (userId: string | null) => {
           throw error;
         }
 
-        const planType = creator?.subscription_plan || 'basic';
+        const planType = (creator?.subscription_plan || 'basic') as 'basic' | 'pro';
         const status = creator?.subscription_status || 'active';
 
         setSubscription({
-          plan: planType as 'basic' | 'pro',
+          plan: planType,
           status: status as 'active' | 'inactive' | 'cancelled',
           features: PLAN_FEATURES[planType as keyof typeof PLAN_FEATURES],
           limits: PLAN_FEATURES[planType as keyof typeof PLAN_FEATURES],
@@ -183,6 +183,10 @@ export const useSubscription = (userId: string | null) => {
     downgradePlan,
   };
 };
+
+
+
+
 
 
 

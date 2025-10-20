@@ -10,7 +10,7 @@ import Settings from '@/components/Settings';
 import ChatbotManagement from '@/components/ChatbotManagement';
 import ClientDashboard from '@/components/ClientDashboard';
 import ClientManagement from '@/components/ClientManagement';
-import ChatbotRequests from '@/components/ChatbotRequests';
+import ChatbotRequestsView from '@/components/creator/ChatbotRequestsView';
 import SEOStructuredData from '@/components/SEOStructuredData';
 import { AgencyProvider } from '@/contexts/AgencyContext';
 import { handleShortcuts } from '@/utils/pwaUtils';
@@ -50,9 +50,7 @@ const Index = () => {
       case 'analytics':
         return <Dashboard />;
       case 'chatbots':
-        return <ChatbotManagement />;
-      case 'chatbot-requests':
-        return <ChatbotRequests />;
+        return <ChatbotRequestsView />;
       case 'support':
         return <Support />;
       case 'settings':

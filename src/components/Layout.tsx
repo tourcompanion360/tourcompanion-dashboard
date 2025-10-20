@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Camera, BarChart3, Image, HelpCircle, Settings, FileText, Sun, Moon, Menu, X, Share2, GraduationCap, User, Bot, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -6,7 +6,10 @@ import { useAgency } from '@/contexts/AgencyContext';
 import { useAuth } from '@/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { TEXT } from '@/constants/text';
-import FloatingContact from './FloatingContact';
+import NotificationBell from './NotificationBell';
+import NotificationPanel from './NotificationPanel';
+import { useEffect as ReactUseEffect, useState as ReactUseState } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 interface LayoutProps {
   children: React.ReactNode;
   currentPage: string;
@@ -19,10 +22,39 @@ const Layout = ({
 }: LayoutProps) => {
   const { toast } = useToast();
   const { agencySettings } = useAgency();
+  
+  // Debug logging for agency settings
+  console.log('🏢 [Layout] Agency settings:', agencySettings);
   const { signOut, user } = useAuth();
   const navigate = useNavigate();
-  const [isLightTheme, setIsLightTheme] = useState(false);
+  const [isLightTheme, setIsLightTheme] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
+  const [adminKeySequence, setAdminKeySequence] = useState<string[]>([]);
+  const [logoClickCount, setLogoClickCount] = useState(0);
+  
+  // Apply light theme on component mount
+  useEffect(() => {
+    document.documentElement.classList.add('light');
+    document.documentElement.classList.remove('dark');
+  }, []);
+
+  // Hidden admin access - Secret key combination: Ctrl+Shift+A
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey && event.key === 'A') {
+        event.preventDefault();
+        navigate('/admin');
+        toast({
+          title: 'Admin Access',
+          description: 'Accessing admin dashboard...',
+        });
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [navigate, toast]);
   
   const navigationItems = [{
     id: 'projects',
@@ -42,12 +74,8 @@ const Layout = ({
     icon: User
   }, {
     id: 'chatbots',
-    label: TEXT.NAVIGATION.CHATBOTS,
+    label: 'Chatbots',
     icon: Bot
-  }, {
-    id: 'chatbot-requests',
-    label: 'Request Chatbot',
-    icon: FileText
   }, {
     id: 'support',
     label: TEXT.NAVIGATION.SUPPORT,
@@ -60,7 +88,15 @@ const Layout = ({
   
   const toggleTheme = () => {
     setIsLightTheme(!isLightTheme);
-    document.documentElement.classList.toggle('light');
+    if (isLightTheme) {
+      // Switch to dark theme
+      document.documentElement.classList.remove('light');
+      document.documentElement.classList.add('dark');
+    } else {
+      // Switch to light theme
+      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light');
+    }
   };
 
   const handleSignOut = async () => {
@@ -84,6 +120,22 @@ const Layout = ({
     onPageChange(pageId);
     setIsMobileMenuOpen(false);
   };
+
+  // Hidden admin access - Click logo 5 times
+  const handleLogoClick = () => {
+    setLogoClickCount(prev => {
+      const newCount = prev + 1;
+      if (newCount >= 5) {
+        navigate('/admin');
+        toast({
+          title: 'Admin Access',
+          description: 'Accessing admin dashboard...',
+        });
+        return 0; // Reset counter
+      }
+      return newCount;
+    });
+  };
   return <div className="min-h-screen bg-background">
       {/* Mobile Header */}
       <div className="lg:hidden bg-sidebar border-b border-sidebar-border">
@@ -93,16 +145,23 @@ const Layout = ({
             <img 
               src={agencySettings.agency_logo} 
               alt={`${agencySettings.agency_name} Logo`} 
-              className="w-8 h-8 object-contain"
+              className="w-8 h-8 object-contain cursor-pointer"
+              onClick={handleLogoClick}
+              onError={(e) => {
+                e.currentTarget.src = '/tourcompanion-logo.png';
+              }}
             />
             <h1 className="text-xl font-bold text-primary tracking-tight">{agencySettings.agency_name}</h1>
           </div>
-          <button 
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="p-2 text-foreground hover:bg-accent rounded-lg transition-colors"
-          >
-            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            <button 
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="p-2 text-foreground hover:bg-accent rounded-lg transition-colors"
+            >
+              {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
+          </div>
         </div>
         
         {/* Bottom row with theme toggle */}
@@ -129,7 +188,11 @@ const Layout = ({
                 <img 
                   src={agencySettings.agency_logo} 
                   alt={`${agencySettings.agency_name} Logo`} 
-                  className="w-8 h-8 object-contain"
+                  className="w-8 h-8 object-contain cursor-pointer"
+                  onClick={handleLogoClick}
+                  onError={(e) => {
+                    e.currentTarget.src = '/tourcompanion-logo.png';
+                  }}
                 />
                 <h1 className="text-2xl font-bold text-primary tracking-tight">{agencySettings.agency_name}</h1>
               </div>
@@ -185,7 +248,11 @@ const Layout = ({
               <img 
                 src={agencySettings.agency_logo} 
                 alt={`${agencySettings.agency_name} Logo`} 
-                className="w-8 h-8 object-contain"
+                className="w-8 h-8 object-contain cursor-pointer"
+                onClick={handleLogoClick}
+                onError={(e) => {
+                  e.currentTarget.src = '/tourcompanion-logo.png';
+                }}
               />
               <h1 className="text-2xl font-bold text-primary tracking-tight">{agencySettings.agency_name}</h1>
             </div>
@@ -206,7 +273,7 @@ const Layout = ({
             })}
           </nav>
 
-          {/* Bottom Section with Settings, Theme Toggle, and Sign Out */}
+          {/* Bottom Section with Theme Toggle and Sign Out */}
           <div className="p-4 border-t border-sidebar-border space-y-3">
             {/* User Info */}
             {user && (
@@ -214,15 +281,6 @@ const Layout = ({
                 <p className="text-xs font-medium text-foreground truncate">{user.email}</p>
               </div>
             )}
-            
-            <Button 
-              variant="outline" 
-              onClick={() => onPageChange('settings')}
-              className="w-full justify-start"
-            >
-              <Settings size={16} className="mr-2" />
-              Settings
-            </Button>
             
             {/* Theme Toggle */}
             <Button 
@@ -249,14 +307,62 @@ const Layout = ({
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col">
+          {/* Desktop Header Bar */}
+          <div className="hidden lg:flex items-center justify-between px-6 py-4 border-b border-sidebar-border bg-background">
+            <div className="flex items-center gap-4">
+              <h2 className="text-lg font-semibold text-foreground capitalize">
+                {currentPage.replace('-', ' ')}
+              </h2>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              {/* Persistent Upgrade button for Free tier */}
+              <UpgradeCtaButton />
+              <NotificationBell />
+            </div>
+          </div>
+
           <main className="flex-1 p-4 sm:p-6 lg:p-8">
             {children}
           </main>
         </div>
       </div>
 
-      {/* Premium Floating Contact */}
-      <FloatingContact />
+
+      {/* Notification Panel */}
+      <NotificationPanel 
+        isOpen={isNotificationPanelOpen} 
+        onClose={() => setIsNotificationPanelOpen(false)} 
+      />
     </div>;
 };
 export default Layout;
+
+// Upgrade CTA component rendered in header
+const UpgradeCtaButton: React.FC = () => {
+  const navigate = useNavigate();
+  const [plan, setPlan] = React.useState<'free' | 'pro' | 'unknown'>('unknown');
+
+  React.useEffect(() => {
+    const load = async () => {
+      try {
+        const token = localStorage.getItem('jwt_token');
+        if (!token) return;
+        const res = await fetch('/api/billing/subscription-status', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (data?.success) setPlan(data.data.plan === 'pro' ? 'pro' : 'free');
+      } catch {}
+    };
+    load();
+  }, []);
+
+  if (plan !== 'free') return null;
+
+  return (
+    <Button onClick={() => navigate('/pricing')} className="bg-purple-600 hover:bg-purple-700 text-white">
+      Upgrade to Pro
+    </Button>
+  );
+};

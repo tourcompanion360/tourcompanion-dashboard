@@ -7,8 +7,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import SupportRequestsManagement from '@/components/admin/SupportRequestsManagement';
 import { 
   Bot, 
   FileText, 
@@ -24,12 +27,14 @@ import {
   Loader2,
   ExternalLink,
   Search,
-  Filter
+  Filter,
+  ShieldX
 } from 'lucide-react';
 import { format } from 'date-fns';
 
 const AdminDashboard = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
@@ -39,10 +44,40 @@ const AdminDashboard = () => {
   const [estimatedDate, setEstimatedDate] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [adminCheckError, setAdminCheckError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadRequests();
-  }, []);
+    const verifyAdminAccess = async () => {
+      if (!user) {
+        setIsAdmin(false);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase.rpc('check_user_admin_status', {
+          user_id: user.id
+        });
+
+        if (error) {
+          console.error('Error verifying admin access:', error);
+          setAdminCheckError('Failed to verify admin access');
+          setIsAdmin(false);
+        } else {
+          setIsAdmin(data === true);
+          if (data === true) {
+            loadRequests();
+          }
+        }
+      } catch (error) {
+        console.error('Error in admin verification:', error);
+        setAdminCheckError('Failed to verify admin access');
+        setIsAdmin(false);
+      }
+    };
+
+    verifyAdminAccess();
+  }, [user]);
 
   const loadRequests = async () => {
     try {
@@ -162,6 +197,64 @@ const AdminDashboard = () => {
     return matchesSearch && matchesStatus;
   });
 
+  // Show loading while checking admin status
+  if (isAdmin === null) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Show error if admin check failed
+  if (adminCheckError) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Card className="w-full max-w-md">
+          <CardContent className="text-center space-y-4 pt-6">
+            <AlertCircle className="h-12 w-12 text-destructive mx-auto" />
+            <h3 className="text-lg font-semibold text-destructive">Access Verification Failed</h3>
+            <p className="text-muted-foreground">
+              Unable to verify your admin status. Please try again or contact support.
+            </p>
+            <Button 
+              onClick={() => window.location.reload()} 
+              variant="outline"
+              className="w-full"
+            >
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Show access denied if not admin
+  if (!isAdmin) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Card className="w-full max-w-md">
+          <CardContent className="text-center space-y-4 pt-6">
+            <ShieldX className="h-12 w-12 text-destructive mx-auto" />
+            <h3 className="text-lg font-semibold text-destructive">Access Denied</h3>
+            <p className="text-muted-foreground">
+              You don't have permission to access the admin panel. 
+              Only administrators can view this area.
+            </p>
+            <Button 
+              onClick={() => window.history.back()} 
+              variant="outline"
+              className="w-full"
+            >
+              Go Back
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -173,11 +266,25 @@ const AdminDashboard = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Admin Dashboard - Chatbot Requests</h1>
+        <h1 className="text-2xl font-bold">Admin Dashboard</h1>
         <p className="text-muted-foreground">
-          Manage all chatbot creation requests from tour creators
+          Manage chatbot requests and support tickets from tour creators
         </p>
       </div>
+
+      <Tabs defaultValue="chatbot-requests" className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="chatbot-requests">Chatbot Requests</TabsTrigger>
+          <TabsTrigger value="support-requests">Support Requests</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="chatbot-requests" className="space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold">Chatbot Requests</h2>
+            <p className="text-muted-foreground">
+              Manage all chatbot creation requests from tour creators
+            </p>
+          </div>
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -399,7 +506,7 @@ const AdminDashboard = () => {
                 {/* Files */}
                 {selectedRequest.uploaded_files && selectedRequest.uploaded_files.length > 0 && (
                   <div className="space-y-3">
-                    <h3 className="font-semibold">Uploaded Files</h3>
+                    <h3 className="font-semibold">Shared Files</h3>
                     <div className="space-y-2">
                       {selectedRequest.uploaded_files.map((file: any, index: number) => (
                         <div key={index} className="flex items-center justify-between p-2 border rounded">
@@ -511,10 +618,19 @@ const AdminDashboard = () => {
           )}
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="support-requests" className="space-y-6">
+          <SupportRequestsManagement />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };
 
 export default AdminDashboard;
+
+
+
 
 

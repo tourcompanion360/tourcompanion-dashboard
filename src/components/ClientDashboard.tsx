@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,16 +15,44 @@ import {
   Download,
   Share2,
   BarChart3,
-  PieChart,
   Activity,
   Target,
   Award,
   CheckCircle,
   AlertCircle,
   Play,
-  ExternalLink
+  ExternalLink,
+  FileUp,
+  Upload,
+  Loader2,
+  XCircle,
+  Trash2
 } from 'lucide-react';
 import { TEXT } from '@/constants/text';
+import { useRecentActivity } from '@/hooks/useRecentActivity';
+import RecentActivity from '@/components/RecentActivity';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
+import { useUnifiedAnalytics } from '@/hooks/useUnifiedAnalytics';
+import { formatDuration } from '@/utils/analyticsTerminology';
+import ImportAnalyticsDialog from '@/components/ImportAnalyticsDialog';
+import ResetAnalyticsDialog from '@/components/ResetAnalyticsDialog';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend, 
+  ResponsiveContainer, 
+  BarChart, 
+  Bar, 
+  PieChart as RechartsPieChart, 
+  Pie, 
+  Cell 
+} from 'recharts';
 
 interface Client {
   id: string;
@@ -49,25 +78,168 @@ interface Project {
 }
 
 interface ClientDashboardProps {
-  client: Client;
-  onBack: () => void;
+  client?: Client;
+  onBack?: () => void;
 }
 
-const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => {
+const ClientDashboard: React.FC<ClientDashboardProps> = ({ client: propClient, onBack }) => {
+  const { projectId } = useParams<{ projectId: string }>();
+  const { user } = useAuth();
+  const [client, setClient] = useState<Client | null>(propClient || null);
+  
+  // Use unified analytics hook for consistent data (must be called before any conditional logic)
+  const unifiedAnalytics = useUnifiedAnalytics({ 
+    projectId: projectId,
+    endClientId: client?.id 
+  });
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importedData, setImportedData] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [showCharts, setShowCharts] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const { toast } = useToast();
+  
+  const channelRef = useRef<any>(null);
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Production ready - No sample data
-  const analyticsData = {
-    totalViews: 0,
-    uniqueVisitors: 0,
-    avgSessionDuration: '0m 0s',
-    bounceRate: 0,
-    conversionRate: 0,
+  console.log('🚀 [ClientDashboard] Component initialized with client:', client, 'projectId:', projectId);
+
+  // Load client data from projectId if not provided as prop
+  useEffect(() => {
+    const loadClientFromProject = async () => {
+      if (!client && projectId) {
+        try {
+          console.log('🔍 [ClientDashboard] Loading client data from projectId:', projectId);
+          
+          // Get project and client data using explicit join
+          const { data: projectData, error: projectError } = await supabase
+            .from('projects')
+            .select(`
+              id,
+              title,
+              description,
+              status,
+              created_at,
+              updated_at,
+              end_client_id
+            `)
+            .eq('id', projectId)
+            .single();
+
+          if (projectError) {
+            console.error('❌ [ClientDashboard] Error loading project:', projectError);
+            toast({
+              title: "Error Loading Project",
+              description: `Failed to load project: ${projectError.message}`,
+              variant: "destructive",
+            });
+            return;
+          }
+
+          if (!projectData) {
+            console.error('❌ [ClientDashboard] No project found for projectId:', projectId);
+            return;
+          }
+
+          // Get client data separately
+          const { data: clientData, error: clientError } = await supabase
+            .from('end_clients')
+            .select('id, name, email, company, phone')
+            .eq('id', projectData.end_client_id)
+            .single();
+
+          if (clientError) {
+            console.error('❌ [ClientDashboard] Error loading client:', clientError);
+            toast({
+              title: "Error Loading Client",
+              description: `Failed to load client: ${clientError.message}`,
+              variant: "destructive",
+            });
+            return;
+          }
+
+          if (!clientData) {
+            console.error('❌ [ClientDashboard] No client found for end_client_id:', projectData.end_client_id);
+            return;
+          }
+
+          const project = {
+            ...projectData,
+            end_clients: clientData
+          };
+
+          if (project && project.end_clients) {
+            const clientData = {
+              id: project.end_clients.id,
+              name: project.end_clients.name,
+              email: project.end_clients.email,
+              company: project.end_clients.company,
+              phone: project.end_clients.phone,
+              project: {
+                id: project.id,
+                title: project.title,
+                description: project.description,
+                status: project.status,
+                created_at: project.created_at,
+                updated_at: project.updated_at
+              }
+            };
+            
+            console.log('✅ [ClientDashboard] Client data loaded:', clientData);
+            setClient(clientData);
+          }
+        } catch (error) {
+          console.error('❌ [ClientDashboard] Error loading client from project:', error);
+          toast({
+            title: "Error Loading Client Data",
+            description: "Failed to load client information. Please try again.",
+            variant: "destructive",
+          });
+        }
+      }
+    };
+
+    loadClientFromProject();
+  }, [client, projectId]);
+
+  // Disable activity loading for client portal to avoid creator data errors
+  const activities: any[] = [];
+  const activitiesLoading = false;
+  const activitiesError = null;
+  const refreshActivities = () => {};
+
+  // State for client analytics from database
+  const [clientAnalytics, setClientAnalytics] = useState<any>(null);
+
+  // Extract metrics from unified analytics
+  const totalViews = unifiedAnalytics.totalViews;
+  const totalVisitors = unifiedAnalytics.totalVisitors;
+  const avgEngagementTime = unifiedAnalytics.avgEngagementTime;
+  const totalLeads = unifiedAnalytics.totalLeads;
+  const conversionRate = unifiedAnalytics.conversionRate;
+  const avgSatisfaction = unifiedAnalytics.avgSatisfaction;
+
+
+
+  // Using formatDuration from utils for consistency
+
+  const displayAnalytics = {
+    totalViews: totalViews,
+    uniqueVisitors: totalVisitors,
+    avgSessionDuration: formatDuration(avgEngagementTime),
+    bounceRate: totalVisitors > 0 ? Math.round(((totalVisitors - totalViews) / totalVisitors) * 100) : 0,
+    conversionRate: conversionRate,
     totalProjects: 0,
     completedProjects: 0,
-    inProgressProjects: 0,
-    satisfactionScore: 0
+    satisfactionScore: avgSatisfaction,
+    totalInteractions: 0,
+    avgEngagementTime: formatDuration(avgEngagementTime),
+    totalLeadsGenerated: totalLeads,
+    inProgressProjects: 0
   };
 
   // Production ready - No sample data
@@ -78,7 +250,24 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
     // For now, show empty state
     setProjects([]);
     setLoading(false);
-  }, [client.id]);
+  }, [client?.id]);
+
+
+  // Real-time updates are now handled by the unified analytics hook
+
+  // Real-time subscriptions are now handled by the unified analytics hook
+
+  // SIMPLE ANALYTICS - NO COMPLEX LOADING
+  console.log('✅ [ClientDashboard] Using hardcoded analytics for client:', client?.id, client?.name);
+
+  // Show loading state if client data is not available
+  if (!client) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -106,26 +295,171 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
     }
   };
 
+  // Handle import from dialog
+  const handleImportData = async (data: any[], projectName: string) => {
+    setIsImporting(true);
+    try {
+      // Get the client's project_id
+      const { data: clientProject, error: projectError } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('end_client_id', client.id)
+        .limit(1)
+        .single();
+
+      if (projectError || !clientProject) {
+        throw new Error('No project found for this client. Please create a project first.');
+      }
+
+      // Store imported data for visualization
+      setImportedData(data);
+
+      // Create chart data for visualization
+      const processedChartData = data.map(row => ({
+        date: row.date,
+        page_views: row.page_views,    // use new column name
+        visitors: row.visitors,        // use new column name
+        total_time: row.total_time,    // use new column name
+        avg_time: row.avg_time,        // use new column name
+        resource_code: row.resource_code
+      }));
+
+      setChartData(processedChartData);
+      setShowCharts(true);
+
+      // Get creator_id for the current user
+      const { data: creatorData, error: creatorError } = await supabase
+        .from('creators')
+        .select('id')
+        .eq('user_id', user?.id)
+        .single();
+
+      if (creatorError || !creatorData) {
+        throw new Error('Creator not found');
+      }
+
+      // Import analytics data to imported_analytics table
+      const analyticsToInsert = data.map(row => ({
+        project_id: clientProject.id,
+        end_client_id: client.id,
+        creator_id: creatorData.id,
+        date: row.date,
+        resource_code: row.resource_code,
+        page_views: row.page_views || 0,    // use new column name
+        visitors: row.visitors || 0,        // use new column name
+        total_time: row.total_time || 0,    // use new column name
+        avg_time: row.avg_time || 0         // use new column name
+      }));
+
+      // Insert into imported_analytics table
+      const { error } = await supabase
+        .from('imported_analytics')
+        .insert(analyticsToInsert);
+
+      if (error) {
+        throw error;
+      }
+
+      // Analytics data will be automatically updated by the unified analytics hook
+
+      toast({
+        title: "Import Successful",
+        description: `Successfully imported ${data.length} analytics records for ${client.name} (${projectName}). Visual charts have been generated.`,
+      });
+
+      // Refresh client analytics from database
+      const { data: updatedAnalytics } = await supabase
+        .rpc('get_client_analytics', { client_uuid: client.id });
+      
+      if (updatedAnalytics) {
+        setClientAnalytics(updatedAnalytics);
+      }
+
+    } catch (error) {
+      console.error('Import error:', error);
+      toast({
+        title: "Import Failed",
+        description: error instanceof Error ? error.message : "Failed to import analytics data. Please try again.",
+        variant: "destructive",
+      });
+      throw error; // Re-throw so dialog can handle it
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // Handle reset analytics data
+  const handleResetAnalytics = async () => {
+    setIsResetting(true);
+    try {
+      // Delete from both analytics tables
+      const [analyticsResult, importedResult] = await Promise.all([
+        supabase
+          .from('analytics')
+          .delete()
+          .eq('end_client_id', client.id),
+        supabase
+          .from('imported_analytics')
+          .delete()
+          .eq('end_client_id', client.id)
+      ]);
+
+      if (analyticsResult.error) {
+        console.error('Error deleting from analytics table:', analyticsResult.error);
+        throw analyticsResult.error;
+      }
+
+      if (importedResult.error) {
+        console.error('Error deleting from imported_analytics table:', importedResult.error);
+        throw importedResult.error;
+      }
+
+      // Clear local state
+      setImportedData([]);
+      setChartData([]);
+      setShowCharts(false);
+      setClientAnalytics(null);
+
+      // Analytics data will be automatically updated by the unified analytics hook
+
+      toast({
+        title: "Analytics Reset Successful",
+        description: `All analytics data for ${client.name} has been permanently deleted.`,
+      });
+
+    } catch (error) {
+      console.error('Reset error:', error);
+      toast({
+        title: "Reset Failed",
+        description: "Failed to reset analytics data. Please try again.",
+        variant: "destructive",
+      });
+      throw error; // Re-throw so dialog can handle it
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4 flex-1 min-w-0">
           <Button 
             variant="outline" 
             size="sm" 
             onClick={onBack}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 flex-shrink-0"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to Projects
           </Button>
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">{client.name}</h1>
-            <p className="text-foreground-secondary">{client.company} • Client Dashboard</p>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-3xl font-bold text-foreground truncate">{client.name}</h1>
+            <p className="text-foreground-secondary truncate">{client.company} • Client Dashboard</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <Badge variant={client.status === 'active' ? 'default' : 'secondary'}>
             {client.status}
           </Badge>
@@ -133,16 +467,64 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
       </div>
 
       {/* Analytics Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-foreground">Analytics Overview</h2>
+            <p className="text-foreground-secondary">Performance metrics and insights for {client.name}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowImportDialog(true)}
+              disabled={isImporting || isResetting}
+              className="flex items-center gap-2"
+            >
+              {isImporting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                <>
+                  <FileUp className="h-4 w-4" />
+                  Import Data
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowResetDialog(true)}
+              disabled={isImporting || isResetting}
+              className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+            >
+              {isResetting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Resetting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4" />
+                  Reset Analytics
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Views</CardTitle>
             <Eye className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{analyticsData.totalViews}</div>
+            <div className="text-2xl font-bold">{displayAnalytics.totalViews}</div>
             <p className="text-xs text-muted-foreground">
-              +12% from last month
+              Real-time view data
             </p>
           </CardContent>
         </Card>
@@ -153,9 +535,9 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{analyticsData.uniqueVisitors}</div>
+            <div className="text-2xl font-bold">{displayAnalytics.uniqueVisitors}</div>
             <p className="text-xs text-muted-foreground">
-              +8% from last month
+              Real-time visitor data
             </p>
           </CardContent>
         </Card>
@@ -166,9 +548,9 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{analyticsData.avgSessionDuration}</div>
+            <div className="text-2xl font-bold">{displayAnalytics.avgSessionDuration}</div>
             <p className="text-xs text-muted-foreground">
-              +15% from last month
+              Real-time session data
             </p>
           </CardContent>
         </Card>
@@ -179,9 +561,9 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
             <Star className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{analyticsData.satisfactionScore}/5</div>
+            <div className="text-2xl font-bold">{displayAnalytics.satisfactionScore}/5</div>
             <p className="text-xs text-muted-foreground">
-              Based on 24 reviews
+              Real-time satisfaction data
             </p>
           </CardContent>
         </Card>
@@ -195,15 +577,15 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
             <Target className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{analyticsData.totalProjects}</div>
+            <div className="text-2xl font-bold">{displayAnalytics.totalProjects}</div>
             <div className="mt-2 space-y-1">
               <div className="flex justify-between text-sm">
                 <span>Completed</span>
-                <span>{analyticsData.completedProjects}</span>
+                <span>{displayAnalytics.completedProjects}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span>In Progress</span>
-                <span>{analyticsData.inProgressProjects}</span>
+                <span>{displayAnalytics.inProgressProjects}</span>
               </div>
             </div>
           </CardContent>
@@ -215,10 +597,10 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{analyticsData.conversionRate}%</div>
-            <Progress value={analyticsData.conversionRate} className="mt-2" />
+            <div className="text-2xl font-bold">{displayAnalytics.conversionRate}%</div>
+            <Progress value={displayAnalytics.conversionRate} className="mt-2" />
             <p className="text-xs text-muted-foreground mt-1">
-              Above industry average
+              Real-time conversion data
             </p>
           </CardContent>
         </Card>
@@ -229,14 +611,154 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{analyticsData.bounceRate}%</div>
-            <Progress value={100 - analyticsData.bounceRate} className="mt-2" />
+            <div className="text-2xl font-bold">{displayAnalytics.bounceRate}%</div>
+            <Progress value={displayAnalytics.bounceRate} className="mt-2" />
             <p className="text-xs text-muted-foreground mt-1">
-              Below industry average
+              Real-time bounce rate data
             </p>
           </CardContent>
         </Card>
+        </div>
       </div>
+
+      {/* Visual Data Charts */}
+      {showCharts && chartData.length > 0 && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-foreground">Data Visualization</h2>
+              <p className="text-foreground-secondary">Visual representation of imported analytics data</p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowCharts(false)}
+              className="flex items-center gap-2"
+            >
+              <XCircle className="h-4 w-4" />
+              Hide Charts
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Page Views & Unique Visitors Line Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Page Views & Unique Visitors Over Time</CardTitle>
+                <CardDescription>Trend analysis of visitor engagement</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="pv" stroke="#8884d8" strokeWidth={2} name="Page Views" />
+                    <Line type="monotone" dataKey="uv" stroke="#82ca9d" strokeWidth={2} name="Unique Visitors" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            {/* Duration Analysis Bar Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Session Duration Analysis</CardTitle>
+                <CardDescription>Average session duration by date</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="avgDuration" fill="#8884d8" name="Avg Duration (seconds)" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            {/* Resource Code Distribution */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Resource Code Distribution</CardTitle>
+                <CardDescription>Page views by resource code</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <RechartsPieChart>
+                    <Pie
+                      data={chartData.reduce((acc: any[], item) => {
+                        const existing = acc.find(d => d.name === item.resourceCode);
+                        if (existing) {
+                          existing.value += item.pv;
+                        } else {
+                          acc.push({ name: item.resourceCode, value: item.pv });
+                        }
+                        return acc;
+                      }, [])}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {chartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={`hsl(${index * 45}, 70%, 50%)`} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </RechartsPieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            {/* Data Summary Table */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Data Summary</CardTitle>
+                <CardDescription>Key metrics from imported data</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="text-center p-4 bg-muted rounded-lg">
+                      <div className="text-2xl font-bold text-primary">
+                        {chartData.reduce((sum, item) => sum + item.pv, 0)}
+                      </div>
+                      <div className="text-sm text-muted-foreground">Total Page Views</div>
+                    </div>
+                    <div className="text-center p-4 bg-muted rounded-lg">
+                      <div className="text-2xl font-bold text-primary">
+                        {chartData.reduce((sum, item) => sum + item.uv, 0)}
+                      </div>
+                      <div className="text-sm text-muted-foreground">Total Unique Visitors</div>
+                    </div>
+                    <div className="text-center p-4 bg-muted rounded-lg">
+                      <div className="text-2xl font-bold text-primary">
+                        {Math.round(chartData.reduce((sum, item) => sum + item.avgDuration, 0) / chartData.length)}s
+                      </div>
+                      <div className="text-sm text-muted-foreground">Avg Session Duration</div>
+                    </div>
+                    <div className="text-center p-4 bg-muted rounded-lg">
+                      <div className="text-2xl font-bold text-primary">
+                        {new Set(chartData.map(item => item.resourceCode)).size}
+                      </div>
+                      <div className="text-sm text-muted-foreground">Unique Resources</div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
 
       {/* Projects Section */}
       <div className="space-y-6">
@@ -326,8 +848,8 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
                     
                     <div className="flex gap-2">
                       <Button variant="outline" size="sm" className="flex-1">
-                        <Download className="w-4 h-4 mr-2" />
-                        Download
+                        <ExternalLink className="w-4 h-4 mr-2" />
+                        View Media
                       </Button>
                       <Button variant="outline" size="sm">
                         <Share2 className="w-4 h-4" />
@@ -343,57 +865,35 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ client, onBack }) => 
 
       {/* Recent Activity */}
       <div className="space-y-6">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">Recent Activity</h2>
-          <p className="text-foreground-secondary">Latest updates and interactions</p>
-        </div>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-green-100 dark:bg-green-900/20 rounded-full">
-                  <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">Project "Modern Office Space" went live</p>
-                  <p className="text-xs text-muted-foreground">2 hours ago</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 dark:bg-blue-900/20 rounded-full">
-                  <Eye className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">15 new views on "Conference Room Setup"</p>
-                  <p className="text-xs text-muted-foreground">4 hours ago</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-yellow-100 dark:bg-yellow-900/20 rounded-full">
-                  <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">"Reception Area Design" is ready for review</p>
-                  <p className="text-xs text-muted-foreground">1 day ago</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-purple-100 dark:bg-purple-900/20 rounded-full">
-                  <Award className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">Project milestone achieved: 100+ total views</p>
-                  <p className="text-xs text-muted-foreground">2 days ago</p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <RecentActivity
+          activities={activities}
+          loading={activitiesLoading}
+          error={activitiesError}
+          onRefresh={refreshActivities}
+          title="Recent Activity"
+          description="Latest updates and interactions for this client"
+          showStats={true}
+          maxItems={8}
+        />
       </div>
+
+      {/* Import Analytics Dialog */}
+      <ImportAnalyticsDialog
+        isOpen={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        onImport={handleImportData}
+        clientName={client.name}
+        clientId={client.id}
+      />
+
+      {/* Reset Analytics Dialog */}
+      <ResetAnalyticsDialog
+        isOpen={showResetDialog}
+        onClose={() => setShowResetDialog(false)}
+        onConfirm={handleResetAnalytics}
+        clientName={client.name}
+        isResetting={isResetting}
+      />
     </div>
   );
 };

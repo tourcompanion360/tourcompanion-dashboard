@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
+import { useCreatorDashboard } from '@/hooks/useCreatorDashboard';
+import { useRecentActivity } from '@/hooks/useRecentActivity';
+import RecentActivity from '@/components/RecentActivity';
+import { supabase } from '@/integrations/supabase/client';
+import ClientAvatar from '@/components/ui/ClientAvatar';
 import { 
   Search, 
   Plus, 
@@ -64,22 +70,189 @@ interface ClientManagementProps {
 
 const ClientManagement: React.FC<ClientManagementProps> = ({ onClientSelect }) => {
   const { toast } = useToast();
-  const [clients, setClients] = useState<Client[]>([]);
+  const { user } = useAuth();
+  const { clients: realClients, projects, analytics, isLoading, error, refreshData } = useCreatorDashboard(user?.id || '');
+  
+  // Imported analytics are now handled by the useCreatorDashboard hook
+  
+  // Debug logging
+  console.log('[ClientManagement] Dashboard data:', {
+    clientsCount: realClients?.length || 0,
+    projectsCount: projects?.length || 0,
+    analyticsCount: analytics?.length || 0,
+    isLoading,
+    error
+  });
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
+  
+  // Real-time subscription setup
+  const channelRef = useRef<any>(null);
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Use real activity data for the selected client
+  const { activities, loading: activitiesLoading, error: activitiesError, refresh: refreshActivities } = useRecentActivity({
+    clientId: selectedClient?.id,
+    limit: 10
+  });
 
   // Production ready - No sample data
   // Users start with empty state
 
+  // Transform real data to match the expected format
+  const clients = realClients || [];
+
+  // Calculate analytics for each client from the combined analytics data
+  const clientsWithAnalytics = clients.map(client => {
+    // Get all projects for this client
+    const clientProjects = projects?.filter(project => project.end_client_id === client.id) || [];
+    const projectIds = clientProjects.map(p => p.id);
+    
+    // Get analytics for this client's projects (already combined by useCreatorDashboard hook)
+    const clientAnalytics = analytics?.filter(a => projectIds.includes(a.project_id)) || [];
+    
+    // Debug logging
+    console.log(`[ClientManagement] Client: ${client.name}`, {
+      projectIds,
+      clientAnalytics: clientAnalytics.length,
+      totalAnalytics: analytics?.length || 0
+    });
+    
+    // Calculate metrics from combined analytics (regular + imported)
+    const totalViews = clientAnalytics
+      .filter(a => a.metric_type === 'view')
+      .reduce((sum, a) => sum + a.metric_value, 0);
+    
+    const uniqueVisitors = clientAnalytics
+      .filter(a => a.metric_type === 'unique_visitor')
+      .reduce((sum, a) => sum + a.metric_value, 0);
+    
+    const timeSpentData = clientAnalytics
+      .filter(a => a.metric_type === 'time_spent');
+    
+    const avgEngagementTime = timeSpentData.length > 0
+      ? `${Math.floor(timeSpentData.reduce((sum, a) => sum + a.metric_value, 0) / timeSpentData.length / 60)}m ${Math.floor((timeSpentData.reduce((sum, a) => sum + a.metric_value, 0) / timeSpentData.length) % 60)}s`
+      : '0m 0s';
+    
+    const totalLeadsGenerated = clientAnalytics
+      .filter(a => a.metric_type === 'lead_generated')
+      .reduce((sum, a) => sum + a.metric_value, 0);
+    
+    const conversionRate = totalViews > 0 
+      ? Math.round((totalLeadsGenerated / totalViews) * 100 * 100) / 100
+      : 0;
+    
+    const satisfactionData = clientAnalytics
+      .filter(a => a.metric_type === 'satisfaction');
+    
+    const avgSatisfaction = satisfactionData.length > 0 
+      ? satisfactionData.reduce((sum, a) => sum + a.metric_value, 0) / satisfactionData.length
+      : 0;
+    
+    return {
+      ...client,
+      analytics: {
+        totalViews,
+        uniqueVisitors,
+        avgEngagementTime,
+        totalLeadsGenerated,
+        conversionRate,
+        avgSatisfaction
+      }
+    };
+  });
+
+  // Filter clients to only show those with at least one active project
+  const clientsWithProjects = clientsWithAnalytics.filter(client => {
+    const hasProjects = projects?.some(project => project.end_client_id === client.id);
+    return hasProjects;
+  });
+
+  // Set up real-time subscriptions for clients
   useEffect(() => {
-    // Production ready - load real clients from database
-    // For now, show empty state
-    setClients([]);
-    setLoading(false);
-  }, []);
+    if (!user?.id) return;
+
+    console.log('[ClientManagement] Setting up real-time subscriptions');
+
+    const channel = supabase
+      .channel(`client-management-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'end_clients',
+        },
+        (payload) => {
+          console.log('[ClientManagement] Client change detected:', payload);
+          debouncedRefresh();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'projects',
+        },
+        (payload) => {
+          console.log('[ClientManagement] Project change detected:', payload);
+          debouncedRefresh();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'analytics',
+        },
+        (payload) => {
+          console.log('[ClientManagement] Analytics change detected:', payload);
+          debouncedRefresh();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'imported_analytics',
+        },
+        (payload) => {
+          console.log('[ClientManagement] Imported analytics change detected:', payload);
+          debouncedRefresh();
+        }
+      )
+      .subscribe((status) => {
+        console.log('[ClientManagement] Subscription status:', status);
+      });
+
+    channelRef.current = channel;
+
+    return () => {
+      console.log('[ClientManagement] Cleaning up real-time subscriptions');
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+      }
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+    };
+  }, [user?.id]);
+
+  const debouncedRefresh = () => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+    
+    debounceTimeoutRef.current = setTimeout(() => {
+      console.log('[ClientManagement] Triggering debounced refresh');
+      refreshData();
+    }, 1000);
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -107,7 +280,7 @@ const ClientManagement: React.FC<ClientManagementProps> = ({ onClientSelect }) =
     }
   };
 
-  const filteredClients = clients.filter(client => {
+  const filteredClients = clientsWithProjects.filter(client => {
     const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          client.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          client.email.toLowerCase().includes(searchTerm.toLowerCase());
@@ -123,11 +296,11 @@ const ClientManagement: React.FC<ClientManagementProps> = ({ onClientSelect }) =
     onClientSelect?.(client);
   };
 
-  const totalViews = clients.reduce((sum, client) => sum + (client.analytics?.totalViews || 0), 0);
-  const totalClients = clients.length;
-  const activeClients = clients.filter(client => client.status === 'active').length;
-  const avgSatisfaction = clients.length > 0 
-    ? clients.reduce((sum, client) => sum + (client.analytics?.satisfaction || 0), 0) / clients.length 
+  const totalViews = clientsWithProjects.reduce((sum, client) => sum + (client.analytics?.totalViews || 0), 0);
+  const totalClients = clientsWithProjects.length;
+  const activeClients = clientsWithProjects.filter(client => client.status === 'active').length;
+  const avgSatisfaction = clientsWithProjects.length > 0 
+    ? clientsWithProjects.reduce((sum, client) => sum + (client.analytics?.satisfaction || 0), 0) / clientsWithProjects.length 
     : 0;
 
   if (selectedClient) {
@@ -376,26 +549,16 @@ const ClientManagement: React.FC<ClientManagementProps> = ({ onClientSelect }) =
           </TabsContent>
 
           <TabsContent value="activity" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Activity</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {selectedClient.recentActivity.map((activity, index) => (
-                    <div key={index} className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                      <div className="w-2 h-2 bg-primary rounded-full"></div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{activity.description}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(activity.timestamp).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+            <RecentActivity
+              activities={activities}
+              loading={activitiesLoading}
+              error={activitiesError}
+              onRefresh={refreshActivities}
+              title={`Recent Activity - ${selectedClient.name}`}
+              description={`Latest updates and interactions for ${selectedClient.name}`}
+              showStats={true}
+              maxItems={15}
+            />
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-6">
@@ -549,7 +712,7 @@ const ClientManagement: React.FC<ClientManagementProps> = ({ onClientSelect }) =
       </div>
 
       {/* Clients Grid */}
-      {loading ? (
+      {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {Array.from({ length: 6 }).map((_, i) => (
             <Card key={i} className="animate-pulse">
@@ -580,28 +743,25 @@ const ClientManagement: React.FC<ClientManagementProps> = ({ onClientSelect }) =
           {filteredClients.map((client) => (
             <Card key={client.id} className="hover:shadow-lg transition-all duration-200 hover:scale-[1.02] cursor-pointer group">
               <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center">
-                      <span className="text-sm font-semibold text-primary">
-                        {client.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                      </span>
-                    </div>
+                <div className="card-header-safe">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <ClientAvatar 
+                      name={client.name} 
+                      size="sm" 
+                      className="flex-shrink-0"
+                    />
                     <div className="flex-1 min-w-0">
-                      <CardTitle className="text-lg line-clamp-1 group-hover:text-primary transition-colors">
+                      <CardTitle className="text-lg name-display-safe group-hover:text-primary transition-colors">
                         {client.name}
                       </CardTitle>
-                      <CardDescription className="line-clamp-1">
+                      <CardDescription className="company-display-safe">
                         {client.company}
                       </CardDescription>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     <Badge className={getStatusColor(client.status)}>
                       {client.status}
-                    </Badge>
-                    <Badge className={getSubscriptionColor(client.subscription)}>
-                      {client.subscription}
                     </Badge>
                   </div>
                 </div>
@@ -695,7 +855,7 @@ const ClientManagement: React.FC<ClientManagementProps> = ({ onClientSelect }) =
         </div>
       )}
 
-      {!loading && filteredClients.length === 0 && (
+      {!isLoading && filteredClients.length === 0 && (
         <Card>
           <CardContent className="flex items-center justify-center py-12">
             <div className="text-center">

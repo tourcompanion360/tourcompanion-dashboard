@@ -10,9 +10,9 @@ interface AccountSettings {
   email: string;
 }
 const defaultAccountSettings: AccountSettings = {
-  email: 'intermobilvirtualtour@gmail.com'
+  email: 'support@tourcompanion.com'
 };
-const STATIC_PASSWORD = 'Intermobilvirtualtour9@';
+const STATIC_PASSWORD = 'TourCompanion2024!';
 const Impostazioni = () => {
   const [accountSettings, setAccountSettings] = useState<AccountSettings>(defaultAccountSettings);
   const { toast } = useToast();
@@ -40,6 +40,9 @@ const Impostazioni = () => {
               src={agencySettings.agency_logo} 
               alt={`${agencySettings.agency_name} Logo`} 
               className="w-8 h-8 object-contain"
+              onError={(e) => {
+                e.currentTarget.src = '/tourcompanion-logo.png';
+              }}
             />
             <h1 className="text-3xl font-bold text-foreground">Impostazioni</h1>
           </div>

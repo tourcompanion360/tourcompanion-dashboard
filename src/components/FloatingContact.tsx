@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { MessageCircle, Phone, Mail, X } from 'lucide-react';
+import { MessageCircle, Mail, X, Settings } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const FloatingContact = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const navigate = useNavigate();
 
   const contactOptions = [
     {
@@ -28,16 +30,6 @@ const FloatingContact = () => {
         const mailtoUrl = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         window.location.href = mailtoUrl;
       }
-    },
-    {
-      id: 'phone',
-      label: 'Chiama',
-      icon: Phone,
-      color: 'from-purple-500 to-purple-600',
-      action: () => {
-        const phoneNumber = '+393293763839';
-        window.location.href = `tel:${phoneNumber}`;
-      }
     }
   ];
 
@@ -46,9 +38,9 @@ const FloatingContact = () => {
   };
 
   return (
-    <div className="fixed bottom-8 right-8 z-50">
+    <div className="fixed bottom-8 left-8 z-40">
       {/* Contact Options */}
-      <div className={`absolute bottom-20 right-0 flex flex-col gap-3 transition-all duration-300 ease-out ${
+      <div className={`absolute bottom-20 left-0 flex flex-col gap-3 transition-all duration-300 ease-out ${
         isOpen 
           ? 'opacity-100 translate-y-0 pointer-events-auto' 
           : 'opacity-0 translate-y-4 pointer-events-none'
@@ -58,9 +50,9 @@ const FloatingContact = () => {
           return (
             <div
               key={option.id}
-              className="flex items-center justify-end gap-3"
+              className="flex items-center justify-start gap-3"
               style={{ 
-                transform: isOpen ? 'translateX(0)' : 'translateX(20px)',
+                transform: isOpen ? 'translateX(0)' : 'translateX(-20px)',
                 transition: `all 0.3s ease-out ${index * 0.1}s`
               }}
             >
@@ -76,8 +68,7 @@ const FloatingContact = () => {
                 onClick={option.action}
                 className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-lg hover:scale-105 transition-all duration-200 ${
                   option.id === 'whatsapp' ? 'bg-green-500 hover:bg-green-600' :
-                  option.id === 'email' ? 'bg-blue-500 hover:bg-blue-600' :
-                  'bg-purple-500 hover:bg-purple-600'
+                  'bg-blue-500 hover:bg-blue-600'
                 }`}
               >
                 <Icon size={18} className="text-white" />

@@ -17,6 +17,7 @@ const Auth = () => {
   
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'signin' | 'signup'>('signin');
+  const [justSignedUp, setJustSignedUp] = useState(false);
 
   // Sign in form state
   const [signInData, setSignInData] = useState({
@@ -35,8 +36,8 @@ const Auth = () => {
     website: '',
   });
 
-  // Dark input styles for better contrast on dark card
-  const inputClass = "bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-400";
+  // Input styles for white background
+  const inputClass = "bg-gray-50 border-gray-300 text-gray-900 placeholder:text-gray-500";
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +56,8 @@ const Auth = () => {
       }
 
       if (data?.user) {
+        console.log('🔍 User signed in successfully:', data.user.id);
+        
         // Check if creator profile exists
         const { data: creatorData, error: creatorError } = await supabase
           .from('creators')
@@ -62,21 +65,68 @@ const Auth = () => {
           .eq('user_id', data.user.id)
           .single();
 
-        if (creatorError || !creatorData) {
+        console.log('🔍 Creator profile check:', { creatorData, creatorError });
+
+        // Handle any database connection issues
+        if (creatorError) {
+          console.error('❌ Database error:', creatorError);
           toast({
-            title: 'Profile Not Found',
-            description: 'No creator profile found. Please sign up first.',
+            title: 'Database Connection Issue',
+            description: `Database error: ${creatorError.message}. Please refresh the page and try again.`,
             variant: 'destructive',
           });
-          await supabase.auth.signOut();
           return;
+        }
+
+        if (!creatorData) {
+          console.log('🔍 No creator profile found, attempting to create one...');
+          
+          // If no profile found, try to create one (user might have confirmed email)
+          if (data.user.email_confirmed_at) {
+            const { error: createError } = await supabase
+              .from('creators')
+              .insert({
+                user_id: data.user.id,
+                agency_name: data.user.user_metadata?.agency_name || 'TourCompanion',
+                contact_email: data.user.email || '',
+                agency_logo: '/tourcompanion-logo.png',
+                subscription_plan: 'basic',
+                subscription_status: 'active',
+              });
+
+            if (createError) {
+              console.error('Failed to create creator profile:', createError);
+              console.error('Error details:', createError);
+              toast({
+                title: 'Account Setup Issue',
+                description: `Profile setup failed: ${createError.message}. Please try signing out and back in, or contact support if the issue persists.`,
+                variant: 'destructive',
+              });
+              await supabase.auth.signOut();
+              return;
+            } else {
+              console.log('✅ Creator profile created successfully');
+            }
+          } else {
+            toast({
+              title: '📧 Email Not Confirmed Yet',
+              description: `Please check your email (${data.user.email}) and click the confirmation link before signing in. Check your spam folder if you don't see it.`,
+              variant: 'destructive',
+            });
+            await supabase.auth.signOut();
+            return;
+          }
+        } else {
+          console.log('✅ Creator profile found:', creatorData.agency_name);
         }
 
         toast({
           title: 'Welcome Back!',
-          description: `Signed in successfully as ${creatorData.agency_name}`,
+          description: `Signed in successfully as ${creatorData?.agency_name || 'My Agency'}`,
         });
 
+        // Clear the signup flag
+        setJustSignedUp(false);
         navigate('/');
       }
     } catch (error) {
@@ -122,6 +172,26 @@ const Auth = () => {
       return;
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(signUpData.email)) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please enter a valid email address.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!emailRegex.test(signUpData.contactEmail)) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please enter a valid contact email address.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -131,6 +201,8 @@ const Auth = () => {
         signUpData.password,
         {
           agency_name: signUpData.agencyName,
+          phone: signUpData.phone,
+          website: signUpData.website,
         }
       );
 
@@ -144,29 +216,43 @@ const Auth = () => {
       }
 
       if (authData?.user) {
-        // Create creator profile in database
-        const { error: creatorError } = await supabase
-          .from('creators')
-          .insert({
-            user_id: authData.user.id,
-            agency_name: signUpData.agencyName,
-            contact_email: signUpData.contactEmail,
-            phone: signUpData.phone || null,
-            website: signUpData.website || null,
-            subscription_plan: 'basic',
-            subscription_status: 'active',
+        console.log('User created:', authData.user.email, 'Confirmed:', authData.user.email_confirmed_at);
+        
+        // Check if email confirmation is required
+        if (authData.user.email_confirmed_at === null) {
+          toast({
+            title: '📧 Email Confirmation Required!',
+            description: `We sent a confirmation link to ${signUpData.email}. Please check your inbox (and spam folder) and click the confirmation link to activate your account. You can then sign in below.`,
+            variant: 'default',
+          });
+          
+          // Set flag to show confirmation message
+          setJustSignedUp(true);
+          
+          // Switch to sign in tab
+          setActiveTab('signin');
+          setSignInData({
+            email: signUpData.email,
+            password: signUpData.password,
           });
 
-        if (creatorError) {
-          console.error('Creator profile creation error:', creatorError);
-          toast({
-            title: 'Profile Creation Error',
-            description: 'Account created but profile setup failed. Please contact support.',
-            variant: 'destructive',
+          // Reset sign up form
+          setSignUpData({
+            email: '',
+            password: '',
+            confirmPassword: '',
+            agencyName: '',
+            contactEmail: '',
+            phone: '',
+            website: '',
           });
           return;
         }
 
+        // This should never happen since email confirmation is required
+        // But if it does, the database trigger will handle profile creation
+        console.log('Unexpected: User email already confirmed during signup');
+        
         toast({
           title: 'Account Created!',
           description: 'Your creator account has been set up successfully. You can now sign in.',
@@ -203,20 +289,20 @@ const Auth = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-white p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-primary rounded-2xl mb-4 shadow-lg">
             <Building2 className="h-8 w-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">TourCompanion SaaS</h1>
-          <p className="text-slate-300">Manage your virtual tours and clients</p>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">TourCompanion</h1>
+          <p className="text-gray-600">Manage your virtual tours and clients</p>
         </div>
 
-        <Card className="shadow-2xl border-slate-700 bg-slate-800/90 text-slate-100">
+        <Card className="shadow-2xl border-gray-200 bg-white text-gray-900">
           <CardHeader>
-            <CardTitle className="text-slate-100">Tour Creator Portal</CardTitle>
-            <CardDescription className="text-slate-400">
+            <CardTitle className="text-gray-900">Tour Creator Portal</CardTitle>
+            <CardDescription className="text-gray-600">
               Sign in to your account or create a new one
             </CardDescription>
           </CardHeader>
@@ -229,6 +315,19 @@ const Auth = () => {
 
               {/* Sign In Tab */}
               <TabsContent value="signin">
+                {justSignedUp && signInData.email && (
+                  <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      <strong>📧 IMPORTANT: Email Confirmation Required!</strong><br/>
+                      We sent a confirmation link to <strong>{signInData.email}</strong>. 
+                      <br/><br/>
+                      <strong>Next Steps:</strong>
+                      <br/>1. Check your inbox (and spam folder)
+                      <br/>2. Click the confirmation link in the email
+                      <br/>3. Come back here and sign in below
+                    </p>
+                  </div>
+                )}
                 <form onSubmit={handleSignIn} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="signin-email">Email</Label>
@@ -279,6 +378,11 @@ const Auth = () => {
 
               {/* Sign Up Tab */}
               <TabsContent value="signup">
+                <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                  <p className="text-sm text-green-800 dark:text-green-200">
+                    <strong>📧 After signing up:</strong> You'll receive an email confirmation link. Click it to activate your account, then return here to sign in.
+                  </p>
+                </div>
                 <form onSubmit={handleSignUp} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="signup-agency">Agency Name *</Label>
@@ -413,9 +517,14 @@ const Auth = () => {
           </CardContent>
         </Card>
 
-        <p className="text-center text-sm text-slate-400 mt-4">
-          By signing in, you agree to our Terms of Service and Privacy Policy
-        </p>
+        <div className="text-center mt-4 space-y-2">
+          <p className="text-sm text-gray-600">
+            Don't have an account yet? <span className="text-primary font-medium cursor-pointer hover:underline" onClick={() => setActiveTab('signup')}>Sign up now</span> to start creating amazing virtual tours!
+          </p>
+          <p className="text-xs text-gray-500">
+            By signing in, you agree to our Terms of Service and Privacy Policy
+          </p>
+        </div>
       </div>
     </div>
   );

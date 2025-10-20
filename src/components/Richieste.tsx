@@ -2,7 +2,7 @@ import React from 'react';
 import ClientRequestsHub from './ClientRequestsHub';
 
 interface RichiesteProps {
-  prefilledData?: any;
+  prefilledData?: Record<string, unknown>;
   onDataUsed?: () => void;
 }
 

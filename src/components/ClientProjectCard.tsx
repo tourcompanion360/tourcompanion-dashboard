@@ -124,23 +124,23 @@ const ClientProjectCard: React.FC<ClientProjectCardProps> = ({
   return (
     <Card className="hover:shadow-lg transition-all duration-200 hover:scale-[1.02] cursor-pointer group">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center">
-              <span className="text-sm font-semibold text-primary">
+        <div className="card-header-safe">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+              <span className="text-sm font-semibold text-primary-foreground">
                 {project.client.name.split(' ').map(n => n[0]).join('').toUpperCase()}
               </span>
             </div>
             <div className="flex-1 min-w-0">
-              <CardTitle className="text-lg line-clamp-1 group-hover:text-primary transition-colors">
+              <CardTitle className="text-lg name-display-safe group-hover:text-primary transition-colors">
                 {project.project.title}
               </CardTitle>
-              <CardDescription className="line-clamp-1">
+              <CardDescription className="company-display-safe">
                 {project.client.name} • {project.client.company}
               </CardDescription>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <Badge className={getStatusColor(project.project.status)}>
               <div className="flex items-center gap-1">
                 {getStatusIcon(project.project.status)}
@@ -219,20 +219,22 @@ const ClientProjectCard: React.FC<ClientProjectCardProps> = ({
         </div>
         
         {/* Chatbot Status */}
-        {project.chatbot && (
+        {project.chatbots && project.chatbots.length > 0 && (
           <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
             <div className="flex items-center gap-2">
               <Bot className="h-4 w-4 text-primary" />
               <div>
-                <div className="text-sm font-medium">{project.chatbot.name}</div>
+                <div className="text-sm font-medium">{project.chatbots[0].name}</div>
                 <div className="text-xs text-muted-foreground">
-                  {project.chatbot.conversations} conversations
+                  {project.chatbots[0].statistics?.total_conversations || 0} conversations
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-1">
               <Star className="h-3 w-3 text-yellow-500" />
-              <span className="text-xs font-medium">{project.chatbot.satisfaction}/5</span>
+              <span className="text-xs font-medium">
+                {project.chatbots[0].statistics?.satisfaction_rate || 0}/5
+              </span>
             </div>
           </div>
         )}

@@ -12,10 +12,10 @@ export const useRealtime = () => {
 
   // Subscribe to leads table changes
   const subscribeToLeads = (
-    callback: (payload: any) => void,
+    callback: (payload: Record<string, unknown>) => void,
     filter?: { chatbot_id?: string; project_id?: string; end_client_id?: string }
   ) => {
-    let channelName = 'leads';
+    const channelName = 'leads';
     let filterString = '';
 
     if (filter) {
@@ -54,10 +54,10 @@ export const useRealtime = () => {
 
   // Subscribe to analytics table changes
   const subscribeToAnalytics = (
-    callback: (payload: any) => void,
+    callback: (payload: Record<string, unknown>) => void,
     filter?: { project_id?: string; end_client_id?: string }
   ) => {
-    let channelName = 'analytics';
+    const channelName = 'analytics';
     let filterString = '';
 
     if (filter) {
@@ -94,10 +94,10 @@ export const useRealtime = () => {
 
   // Subscribe to requests table changes
   const subscribeToRequests = (
-    callback: (payload: any) => void,
+    callback: (payload: Record<string, unknown>) => void,
     filter?: { end_client_id?: string; project_id?: string }
   ) => {
-    let channelName = 'requests';
+    const channelName = 'requests';
     let filterString = '';
 
     if (filter) {
@@ -134,10 +134,10 @@ export const useRealtime = () => {
 
   // Subscribe to projects table changes
   const subscribeToProjects = (
-    callback: (payload: any) => void,
+    callback: (payload: Record<string, unknown>) => void,
     filter?: { end_client_id?: string; creator_id?: string }
   ) => {
-    let channelName = 'projects';
+    const channelName = 'projects';
     let filterString = '';
 
     if (filter) {
@@ -174,10 +174,10 @@ export const useRealtime = () => {
 
   // Subscribe to chatbots table changes
   const subscribeToChatbots = (
-    callback: (payload: any) => void,
+    callback: (payload: Record<string, unknown>) => void,
     filter?: { project_id?: string; end_client_id?: string }
   ) => {
-    let channelName = 'chatbots';
+    const channelName = 'chatbots';
     let filterString = '';
 
     if (filter) {
@@ -260,6 +260,10 @@ export const useRealtime = () => {
     cleanup,
   };
 };
+
+
+
+
 
 
 

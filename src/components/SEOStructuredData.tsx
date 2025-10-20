@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAgency } from '@/contexts/AgencyContext';
+import { sanitizeJsonForHTML, isValidStructuredData } from '@/utils/sanitization';
 
 interface SEOStructuredDataProps {
   type?: 'organization' | 'website' | 'realestate';
@@ -14,10 +15,10 @@ const SEOStructuredData: React.FC<SEOStructuredDataProps> = ({ type = 'website' 
       "@type": "Organization",
       "name": `${agencySettings.agency_name} Dashboard`,
       "description": "gestisci il tuo virtual tour con un click",
-      "url": "https://eec03a89-7554-4793-b88b-68fe18925d71.lovableproject.com",
+      "url": "https://tourcompanion.com",
       "logo": {
         "@type": "ImageObject",
-        "url": `https://eec03a89-7554-4793-b88b-68fe18925d71.lovableproject.com${agencySettings.agency_logo}`,
+        "url": `https://tourcompanion.com${agencySettings.agency_logo}`,
         "width": 512,
         "height": 512
       },
@@ -39,11 +40,11 @@ const SEOStructuredData: React.FC<SEOStructuredDataProps> = ({ type = 'website' 
         "@type": "WebSite",
         "name": `${agencySettings.agency_name} Dashboard`,
         "description": "gestisci il tuo virtual tour con un click",
-        "url": "https://eec03a89-7554-4793-b88b-68fe18925d71.lovableproject.com",
+        "url": "https://tourcompanion.com",
         "publisher": baseData,
         "potentialAction": {
           "@type": "SearchAction",
-          "target": "https://eec03a89-7554-4793-b88b-68fe18925d71.lovableproject.com/?search={search_term_string}",
+          "target": "https://tourcompanion.com/?search={search_term_string}",
           "query-input": "required name=search_term_string"
         },
         "inLanguage": "it",
@@ -108,11 +109,19 @@ const SEOStructuredData: React.FC<SEOStructuredDataProps> = ({ type = 'website' 
     return baseData;
   };
 
+  const structuredData = getStructuredData();
+  
+  // Validate and sanitize the structured data
+  if (!isValidStructuredData(structuredData)) {
+    console.warn('Invalid structured data detected, skipping rendering');
+    return null;
+  }
+  
   return (
     <script
       type="application/ld+json"
       dangerouslySetInnerHTML={{
-        __html: JSON.stringify(getStructuredData(), null, 2)
+        __html: sanitizeJsonForHTML(structuredData)
       }}
     />
   );

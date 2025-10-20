@@ -5,13 +5,17 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Eye, MessageSquare, TrendingUp, Image, FileText, Settings, LogOut } from 'lucide-react';
+import { Loader2, Eye, MessageSquare, TrendingUp, Image, FileText, Settings, LogOut, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import ClientPortalAnalytics from '@/components/client-portal/ClientPortalAnalytics';
 import ClientPortalMedia from '@/components/client-portal/ClientPortalMedia';
 import ClientPortalRequests from '@/components/client-portal/ClientPortalRequests';
 import ClientPortalChatbot from '@/components/client-portal/ClientPortalChatbot';
 import { useClientPortalRealtime } from '@/hooks/useClientPortalRealtime';
+import { useRecentActivity } from '@/hooks/useRecentActivity';
+import { formatProjectType } from '@/utils/formatDisplayText';
+import RecentActivity from '@/components/RecentActivity';
+import { clientPortalRateLimiter, generateRateLimitKey } from '@/utils/rateLimiter';
 
 const ClientPortal = () => {
   const { projectId } = useParams<{ projectId: string }>();
@@ -21,10 +25,37 @@ const ClientPortal = () => {
   const [project, setProject] = useState<any>(null);
   const [endClient, setEndClient] = useState<any>(null);
   const [chatbot, setChatbot] = useState<any>(null);
+  const [rateLimitExceeded, setRateLimitExceeded] = useState(false);
+  const [rateLimitInfo, setRateLimitInfo] = useState<{ remaining: number; resetTime: number } | null>(null);
+
+  // Use real activity data for this project
+  const { activities, loading: activitiesLoading, error: activitiesError, refresh: refreshActivities } = useRecentActivity({
+    projectId: projectId || undefined,
+    limit: 10
+  });
 
   const loadData = async () => {
     try {
       setLoading(true);
+
+      // Check rate limit before making requests
+      const rateLimitKey = generateRateLimitKey();
+      const rateLimitResult = clientPortalRateLimiter.isAllowed(rateLimitKey);
+      
+      if (!rateLimitResult.allowed) {
+        setRateLimitExceeded(true);
+        setRateLimitInfo({
+          remaining: rateLimitResult.remaining,
+          resetTime: rateLimitResult.resetTime
+        });
+        setLoading(false);
+        return;
+      }
+
+      setRateLimitInfo({
+        remaining: rateLimitResult.remaining,
+        resetTime: rateLimitResult.resetTime
+      });
 
       // Get current user
       const { data: { user }, error: userErr } = await supabase.auth.getUser();
@@ -126,6 +157,42 @@ const ClientPortal = () => {
     );
   }
 
+  if (rateLimitExceeded) {
+    const resetTime = new Date(rateLimitInfo?.resetTime || Date.now() + 60000);
+    const timeUntilReset = Math.ceil((resetTime.getTime() - Date.now()) / 1000);
+    
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center">
+              <Clock className="h-6 w-6 text-destructive" />
+            </div>
+            <CardTitle className="text-destructive">Rate Limit Exceeded</CardTitle>
+            <CardDescription>
+              Too many requests. Please wait before trying again.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-center space-y-4">
+            <div className="text-sm text-muted-foreground">
+              <p>You can try again in:</p>
+              <p className="font-mono text-lg font-semibold text-primary">
+                {Math.floor(timeUntilReset / 60)}:{(timeUntilReset % 60).toString().padStart(2, '0')}
+              </p>
+            </div>
+            <Button 
+              onClick={() => window.location.reload()} 
+              variant="outline"
+              className="w-full"
+            >
+              Try Again
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (!project) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -205,7 +272,7 @@ const ClientPortal = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold mb-2">Type</h3>
-                  <Badge variant="outline">{project.project_type}</Badge>
+                  <Badge variant="outline">{formatProjectType(project.project_type)}</Badge>
                 </div>
                 {project.tour_url && (
                   <div>
@@ -274,6 +341,18 @@ const ClientPortal = () => {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Recent Activity */}
+            <RecentActivity
+              activities={activities}
+              loading={activitiesLoading}
+              error={activitiesError}
+              onRefresh={refreshActivities}
+              title="Recent Activity"
+              description="Latest updates and interactions for this project"
+              showStats={true}
+              maxItems={6}
+            />
           </TabsContent>
 
           <TabsContent value="analytics">

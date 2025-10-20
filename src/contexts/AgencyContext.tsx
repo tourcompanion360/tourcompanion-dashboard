@@ -37,15 +37,64 @@ export const AgencyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const loadAgencySettings = async () => {
     try {
-      // For now, we'll use default values since we removed auth
-      // In a real implementation, this would fetch from user profile
-      setAgencySettings({
-        agency_name: 'TourCompanion',
-        agency_logo: '/tourcompanion-logo.png',
-        current_user_email: 'user@example.com'
-      });
+      // Skip agency settings loading for public client portal routes
+      if (window.location.pathname.startsWith('/client/')) {
+        console.log('[AgencyProvider] Skipping agency settings for public client portal');
+        setAgencySettings({
+          agency_name: 'TourCompanion',
+          agency_logo: '/tourcompanion-logo.png',
+          current_user_email: 'contact@youragency.com'
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError || !user) {
+        // If no user, use default values
+        setAgencySettings({
+          agency_name: 'TourCompanion',
+          agency_logo: '/tourcompanion-logo.png',
+          current_user_email: 'contact@youragency.com'
+        });
+        return;
+      }
+
+        // Load user's agency settings from database
+        const { data: profileData, error: profileError } = await supabase
+          .from('creators')
+          .select('agency_name, agency_logo, contact_email')
+          .eq('user_id', user.id)
+          .single();
+
+      if (profileData && !profileError) {
+        // Use user's custom agency name and logo
+        const logoPath = profileData.agency_logo || '/tourcompanion-logo.png';
+        console.log('🏢 [AgencyProvider] Setting agency logo:', logoPath);
+        setAgencySettings({
+          agency_name: profileData.agency_name || 'Your Agency',
+          agency_logo: logoPath,
+          current_user_email: profileData.contact_email || user.email || 'contact@youragency.com'
+        });
+      } else {
+        // If no profile found, use default values
+        console.log('🏢 [AgencyProvider] Using default logo: /tourcompanion-logo.png');
+        setAgencySettings({
+          agency_name: 'TourCompanion',
+          agency_logo: '/tourcompanion-logo.png',
+          current_user_email: user.email || 'contact@youragency.com'
+        });
+      }
     } catch (error) {
       console.error('Error loading agency settings:', error);
+      // Fallback to default values
+      setAgencySettings({
+        agency_name: 'Your Agency',
+        agency_logo: '/placeholder-logo.png',
+        current_user_email: 'contact@youragency.com'
+      });
     } finally {
       setLoading(false);
     }
@@ -53,8 +102,33 @@ export const AgencyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const updateAgencySettings = async (settings: Partial<AgencySettings>) => {
     try {
-      setAgencySettings(prev => ({ ...prev, ...settings }));
-      // In a real implementation, this would save to Supabase
+      // Update local state
+      setAgencySettings(prev => ({
+        ...prev, 
+        ...settings
+      }));
+
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError || !user) {
+        console.error('User not authenticated');
+        return;
+      }
+
+      // Save to database
+      const { error } = await supabase
+        .from('creators')
+        .update({
+          agency_name: settings.agency_name,
+          contact_email: settings.current_user_email,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error('Error saving agency settings:', error);
+      }
     } catch (error) {
       console.error('Error updating agency settings:', error);
     }

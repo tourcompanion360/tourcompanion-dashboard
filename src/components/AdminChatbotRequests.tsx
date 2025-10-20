@@ -23,19 +23,84 @@ import {
   Clock,
   AlertCircle,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  Trash2
 } from 'lucide-react';
 import { format } from 'date-fns';
 
+interface ChatbotRequest {
+  id: string;
+  project_id: string;
+  end_client_id: string;
+  
+  // Required fields from base schema
+  title: string;
+  description: string;
+  request_type: 'hotspot_update' | 'content_change' | 'design_modification' | 'new_feature' | 'bug_fix';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'pending' | 'open' | 'in_progress' | 'completed' | 'cancelled' | 'rejected';
+  
+  // Chatbot-specific fields
+  chatbot_name?: string;
+  chatbot_purpose?: string;
+  target_audience?: string;
+  language?: string;
+  website_url?: string;
+  existing_content?: string;
+  specific_questions?: string;
+  business_info?: string;
+  tone?: string;
+  response_style?: string;
+  special_instructions?: string;
+  
+  // Additional fields
+  preferred_contact_method?: string;
+  timeline?: string;
+  additional_notes?: string;
+  file_links?: string;
+  chatbot_link?: string;
+  
+  // Metadata
+  uploaded_files?: any[];
+  admin_notes?: string;
+  estimated_completion_date?: string;
+  chatbot_url?: string;
+  
+  // Deletion tracking:
+  deleted_by_creator?: boolean;
+  deleted_by_admin?: boolean;
+  creator_deleted_at?: string;
+  admin_deleted_at?: string;
+  deletion_reason?: string;
+  
+  created_at: string;
+  updated_at: string;
+  
+  // Relations
+  projects?: { 
+    title: string; 
+    end_clients: { 
+      name: string; 
+      email: string;
+      company?: string;
+      creators: {
+        agency_name: string;
+        contact_email: string;
+      }
+    } 
+  };
+}
+
 const AdminChatbotRequests = () => {
   const { toast } = useToast();
-  const [requests, setRequests] = useState<any[]>([]);
+  const [requests, setRequests] = useState<ChatbotRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedRequest, setSelectedRequest] = useState<any>(null);
+  const [selectedRequest, setSelectedRequest] = useState<ChatbotRequest | null>(null);
   const [updating, setUpdating] = useState(false);
   const [adminNotes, setAdminNotes] = useState('');
   const [chatbotUrl, setChatbotUrl] = useState('');
   const [estimatedDate, setEstimatedDate] = useState('');
+  const [hardDeletingId, setHardDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadRequests();
@@ -50,15 +115,15 @@ const AdminChatbotRequests = () => {
         .from('chatbot_requests')
         .select(`
           *,
-          projects!inner(
+          projects:project_id (
             id,
             title,
-            end_clients!inner(
+            end_clients:end_client_id (
               id,
               name,
               email,
               company,
-              creators!inner(
+              creators:creator_id (
                 id,
                 agency_name,
                 contact_email
@@ -70,7 +135,7 @@ const AdminChatbotRequests = () => {
 
       if (error) throw error;
       setRequests(data || []);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading requests:', error);
       toast({
         title: 'Error',
@@ -102,7 +167,7 @@ const AdminChatbotRequests = () => {
       });
 
       loadRequests();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating request:', error);
       toast({
         title: 'Update Failed',
@@ -111,6 +176,36 @@ const AdminChatbotRequests = () => {
       });
     } finally {
       setUpdating(false);
+    }
+  };
+
+  const handleHardDelete = async (requestId: string) => {
+    try {
+      setHardDeletingId(requestId);
+      
+      const { error } = await supabase.rpc('hard_delete_chatbot_request', {
+        request_id: requestId
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Request Permanently Deleted',
+        description: 'The chatbot request has been permanently removed from the system.',
+      });
+
+      // Remove from local state
+      setRequests(prev => prev.filter(req => req.id !== requestId));
+      setSelectedRequest(null);
+    } catch (error: any) {
+      console.error('Error hard deleting request:', error);
+      toast({
+        title: 'Delete Failed',
+        description: error.message || 'Failed to permanently delete the request.',
+        variant: 'destructive'
+      });
+    } finally {
+      setHardDeletingId(null);
     }
   };
 
@@ -199,6 +294,11 @@ const AdminChatbotRequests = () => {
                             <Badge className={getPriorityColor(request.priority)}>
                               {request.priority}
                             </Badge>
+                            {request.deleted_by_creator && (
+                              <Badge className="bg-orange-100 text-orange-800 border-orange-200">
+                                Deleted by Creator
+                              </Badge>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -296,7 +396,7 @@ const AdminChatbotRequests = () => {
                 {/* Files */}
                 {selectedRequest.uploaded_files && selectedRequest.uploaded_files.length > 0 && (
                   <div className="space-y-3">
-                    <h3 className="font-semibold">Uploaded Files</h3>
+                    <h3 className="font-semibold">Shared Files</h3>
                     <div className="space-y-2">
                       {selectedRequest.uploaded_files.map((file: any, index: number) => (
                         <div key={index} className="flex items-center justify-between p-2 border rounded">
@@ -393,6 +493,48 @@ const AdminChatbotRequests = () => {
                       {updating ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save Date'}
                     </Button>
                   </div>
+
+                  {/* Hard Delete Section */}
+                  <div className="space-y-2 border-t pt-4">
+                    <Label className="text-red-600">Danger Zone</Label>
+                    <div className="space-y-2">
+                      {selectedRequest.deleted_by_creator && (
+                        <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                            <AlertCircle className="h-4 w-4 text-orange-600" />
+                            <span className="text-sm font-medium text-orange-800">
+                              Deleted by Creator
+                            </span>
+                          </div>
+                          <p className="text-sm text-orange-700">
+                            This request was deleted by the creator on{' '}
+                            {selectedRequest.creator_deleted_at && 
+                              format(new Date(selectedRequest.creator_deleted_at), 'MMM d, yyyy HH:mm')
+                            }
+                          </p>
+                          {selectedRequest.deletion_reason && (
+                            <p className="text-sm text-orange-600 mt-1">
+                              Reason: {selectedRequest.deletion_reason}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleHardDelete(selectedRequest.id)}
+                        disabled={hardDeletingId === selectedRequest.id}
+                        className="w-full"
+                      >
+                        {hardDeletingId === selectedRequest.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : (
+                          <Trash2 className="h-4 w-4 mr-2" />
+                        )}
+                        Permanently Delete Request
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -413,5 +555,8 @@ const AdminChatbotRequests = () => {
 };
 
 export default AdminChatbotRequests;
+
+
+
 
 

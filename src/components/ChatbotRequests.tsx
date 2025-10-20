@@ -14,7 +14,10 @@ import {
   AlertCircle,
   Loader2,
   Plus,
-  Eye
+  Eye,
+  MessageSquare,
+  Settings,
+  X
 } from 'lucide-react';
 import { format } from 'date-fns';
 import ChatbotRequestForm from './ChatbotRequestForm';
@@ -29,9 +32,34 @@ const ChatbotRequests = () => {
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
   const [selectedProjectForNewRequest, setSelectedProjectForNewRequest] = useState<any>(null);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
+  // const [activeTab, setActiveTab] = useState<'existing' | 'requests'>('existing');
   
-  // Get projects for the creator
-  const { projects } = useCreatorDashboard(user?.id || '');
+  // Get projects and chatbots for the creator
+  const { projects: rawProjects, clients, chatbots } = useCreatorDashboard(user?.id || '');
+  
+  // Transform projects to include client data
+  const projects = rawProjects.map(project => {
+    const client = clients?.find(c => c.id === project.end_client_id);
+    return {
+      id: project.id,
+      project: {
+        title: project.title || 'Untitled Project',
+        description: project.description || '',
+        type: project.project_type || 'virtual_tour',
+        status: project.status || 'setup',
+        created_at: project.created_at || new Date().toISOString(),
+        updated_at: project.updated_at || new Date().toISOString()
+      },
+      client: {
+        name: client?.name || 'Unknown Client',
+        email: client?.email || '',
+        company: client?.company || 'Unknown Company',
+        phone: client?.phone || '',
+        website: client?.website || ''
+      },
+      end_clients: client // Keep the original client data for compatibility
+    };
+  });
 
   useEffect(() => {
     if (user) {
@@ -44,6 +72,8 @@ const ChatbotRequests = () => {
       setLoading(true);
       
       // Get chatbot requests for this creator's projects
+      // TODO: SECURITY - Add frontend authorization check as defense in depth
+      // Currently relies only on Supabase RLS - consider adding user validation
       const { data, error } = await supabase
         .from('chatbot_requests')
         .select(`
@@ -68,16 +98,28 @@ const ChatbotRequests = () => {
 
       if (error) throw error;
       setRequests(data || []);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading requests:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load chatbot requests';
       toast({
         title: 'Error',
-        description: 'Failed to load chatbot requests',
+        description: errorMessage,
         variant: 'destructive'
       });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleNewRequestSubmitted = () => {
+    setIsNewRequestOpen(false);
+    setSelectedProjectForNewRequest(null);
+    setShowProjectSelector(false);
+    loadRequests(); // Reload the requests list
+    toast({
+      title: 'Request Submitted',
+      description: 'Your chatbot request has been submitted successfully.',
+    });
   };
 
   const getStatusColor = (status: string) => {
@@ -114,16 +156,6 @@ const ChatbotRequests = () => {
     }
   };
 
-  const handleNewRequestSubmitted = () => {
-    setIsNewRequestOpen(false);
-    setSelectedProjectForNewRequest(null);
-    loadRequests();
-    toast({
-      title: 'Request Submitted',
-      description: 'Your chatbot request has been sent successfully!'
-    });
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -136,7 +168,7 @@ const ChatbotRequests = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Chatbot Requests</h1>
+          <h1 className="text-2xl font-bold">Chatbots</h1>
           <p className="text-muted-foreground">
             Request custom chatbots for your projects
           </p>
@@ -187,7 +219,7 @@ const ChatbotRequests = () => {
                           <div>
                             <h3 className="font-semibold">{request.chatbot_name}</h3>
                             <p className="text-sm text-muted-foreground">
-                              {request.projects.title} • {request.projects.end_clients.name}
+                              {request.projects?.title || 'Unknown Project'} • {request.projects?.end_clients?.name || 'Unknown Client'}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -282,15 +314,15 @@ const ChatbotRequests = () => {
                     <div className="space-y-2 text-sm">
                       <div>
                         <span className="font-medium">Project:</span>
-                        <p>{selectedRequest.projects.title}</p>
+                        <p>{selectedRequest.projects?.title || 'Unknown Project'}</p>
                       </div>
                       <div>
                         <span className="font-medium">Client:</span>
-                        <p>{selectedRequest.projects.end_clients.name}</p>
+                        <p>{selectedRequest.projects?.end_clients?.name || 'Unknown Client'}</p>
                       </div>
                       <div>
                         <span className="font-medium">Company:</span>
-                        <p>{selectedRequest.projects.end_clients.company}</p>
+                        <p>{selectedRequest.projects?.end_clients?.company || 'Unknown Company'}</p>
                       </div>
                     </div>
                   </div>
@@ -308,9 +340,9 @@ const ChatbotRequests = () => {
                   {/* Files */}
                   {selectedRequest.uploaded_files && selectedRequest.uploaded_files.length > 0 && (
                     <div className="space-y-3">
-                      <h3 className="font-semibold">Uploaded Files</h3>
+                      <h3 className="font-semibold">Shared Files</h3>
                       <div className="space-y-2">
-                        {selectedRequest.uploaded_files.map((file: any, index: number) => (
+                        {selectedRequest.uploaded_files.map((file: Record<string, unknown>, index: number) => (
                           <div key={index} className="flex items-center justify-between p-2 border rounded">
                             <div className="flex items-center gap-2">
                               <FileText className="h-4 w-4" />

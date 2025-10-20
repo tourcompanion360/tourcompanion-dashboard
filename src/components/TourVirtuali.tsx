@@ -1,17 +1,31 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import ClientProjectCard from '@/components/ClientProjectCard';
 import NewProjectModal from '@/components/NewProjectModal';
 import ChatbotRequestForm from '@/components/ChatbotRequestForm';
-import { useCreatorDashboard } from '@/hooks/useCreatorDashboard';
+import { useCreatorDashboardFast } from '@/hooks/useCreatorDashboardFast';
+import { useCreatorDashboardSimple } from '@/hooks/useCreatorDashboardSimple';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { isDevMode } from '@/config/dev-mode';
 import ShareClientPortal from './ShareClientPortal';
+import EditClientModal from './EditClientModal';
 import { 
   Plus, 
   Search, 
@@ -26,7 +40,9 @@ import {
   Settings,
   Loader2
 } from 'lucide-react';
+import { OptimizedLoading, ProjectCardSkeleton, ClientListSkeleton } from '@/components/LoadingStates';
 import { TEXT } from '@/constants/text';
+import { formatProjectType, formatProjectStatus } from '@/utils/formatDisplayText';
 
 interface TourVirtualiProps {
   onPageChange?: (page: string) => void;
@@ -44,10 +60,40 @@ const TourVirtuali = ({
   const [statusFilter, setStatusFilter] = useState('all');
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [selectedProjectForSharing, setSelectedProjectForSharing] = useState<any>(null);
+  const [isEditClientModalOpen, setIsEditClientModalOpen] = useState(false);
+  const [selectedClientForEdit, setSelectedClientForEdit] = useState<any>(null);
+  const [projectToDelete, setProjectToDelete] = useState<any>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   
   // Use authentication and data fetching hooks
-  const { user } = useAuth();
-  const { clients, projects, chatbots, analytics, isLoading, error, refreshData } = useCreatorDashboard(user?.id || '');
+  const { user, loading: authLoading } = useAuth();
+  
+  // Debug logging
+  console.log('🔍 [TourVirtuali] User from useAuth:', user);
+  console.log('🔍 [TourVirtuali] User ID:', user?.id);
+  
+  const { clients, projects, chatbots, analytics, isLoading, error, refreshData } = useCreatorDashboardFast(user?.id || '');
+  
+  // Debug logging for dashboard data
+  console.log('🔍 [TourVirtuali] Dashboard data:', { 
+    hasUser: !!user, 
+    userId: user?.id, 
+    authLoading,
+    isLoading, 
+    error,
+    clientsCount: clients?.length || 0,
+    projectsCount: projects?.length || 0
+  });
+  
+  // Manual refresh function
+  const handleRefresh = () => {
+    console.log('[TourVirtuali] Manual refresh triggered');
+    refreshData();
+  };
+  
+  // Real-time subscription setup
+  const channelRef = useRef<any>(null);
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Transform database data to match the expected format
   const [clientProjects, setClientProjects] = useState<any[]>([]);
@@ -59,15 +105,28 @@ const TourVirtuali = ({
   // Transform database data to match the expected format
   useEffect(() => {
     try {
+      console.log('[TourVirtuali] Data transformation - isLoading:', isLoading, 'projects:', projects?.length, 'clients:', clients?.length);
+      console.log('[TourVirtuali] Projects data:', projects);
+      console.log('[TourVirtuali] Clients data:', clients);
       if (!isLoading) {
-        if (projects && projects.length > 0) {
+        // Use the projects directly from the simple hook
+        const allProjects = projects || [];
+        console.log('[TourVirtuali] Projects from simple hook:', allProjects);
+        
+        if (allProjects && allProjects.length > 0) {
           // Use real database data
-          const transformedProjects = projects.map(project => {
+          const transformedProjects = allProjects.map(project => {
             const client = clients?.find(c => c.id === project.end_client_id);
             const projectChatbots = chatbots?.filter(cb => cb.project_id === project.id) || [];
             const projectAnalytics = analytics?.filter(a => a.project_id === project.id) || [];
             
-            // Calculate analytics totals with safety checks
+            // Skip projects without valid client data
+            if (!client || !client.id) {
+              console.warn('Project has no valid client:', project.id, client);
+              return null;
+            }
+            
+            // Calculate real analytics from database data
             const totalViews = projectAnalytics
               .filter(a => a.metric_type === 'view')
               .reduce((sum, a) => sum + (a.metric_value || 0), 0);
@@ -76,15 +135,17 @@ const TourVirtuali = ({
               .filter(a => a.metric_type === 'unique_visitor')
               .reduce((sum, a) => sum + (a.metric_value || 0), 0);
             
-            const sessionDurationRecords = projectAnalytics.filter(a => a.metric_type === 'session_duration');
-            const avgSessionDuration = sessionDurationRecords.length > 0 
-              ? sessionDurationRecords.reduce((sum, a) => sum + (a.metric_value || 0), 0) / sessionDurationRecords.length
-              : 0;
+            const totalTimeSpent = projectAnalytics
+              .filter(a => a.metric_type === 'time_spent')
+              .reduce((sum, a) => sum + (a.metric_value || 0), 0);
             
-            const conversionRecords = projectAnalytics.filter(a => a.metric_type === 'conversion');
-            const conversionRate = totalViews > 0 && conversionRecords.length > 0
-              ? (conversionRecords.reduce((sum, a) => sum + (a.metric_value || 0), 0) / totalViews) * 100
-              : 0;
+            const avgSessionDuration = totalTimeSpent > 0 ? totalTimeSpent : 0;
+            
+            const conversions = projectAnalytics
+              .filter(a => a.metric_type === 'lead_generated')
+              .reduce((sum, a) => sum + (a.metric_value || 0), 0);
+            
+            const conversionRate = totalViews > 0 ? (conversions / totalViews) * 100 : 0;
             
             // Get the primary chatbot for this project
             const primaryChatbot = projectChatbots[0];
@@ -92,6 +153,7 @@ const TourVirtuali = ({
             return {
               id: project.id,
               client: {
+                id: client?.id || '',
                 name: client?.name || 'Unknown Client',
                 email: client?.email || '',
                 company: client?.company || 'Unknown Company',
@@ -101,10 +163,10 @@ const TourVirtuali = ({
               },
               project: {
                 title: project.title || 'Untitled Project',
-                description: project.description || `A ${project.project_type || 'virtual_tour'} project`,
-                type: project.project_type || 'virtual_tour',
+                description: project.description || `A ${formatProjectType(project.project_type) || 'Virtual Tour'} project`,
+                type: formatProjectType(project.project_type) || 'Virtual Tour',
                 category: project.category || 'other',
-                status: project.status || 'setup',
+                status: formatProjectStatus(project.status) || 'Setup',
                 thumbnail_url: project.thumbnail_url || 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=400',
                 created_at: project.created_at || new Date().toISOString(),
                 updated_at: project.updated_at || new Date().toISOString()
@@ -112,8 +174,8 @@ const TourVirtuali = ({
               chatbot: primaryChatbot ? {
                 name: primaryChatbot.name || 'Assistant',
                 isActive: primaryChatbot.is_active || false,
-                conversations: primaryChatbot.total_conversations || 0,
-                satisfaction: primaryChatbot.satisfaction_score || 0,
+                conversations: primaryChatbot.statistics?.total_conversations || 0, // Use real data
+                satisfaction: primaryChatbot.statistics?.satisfaction_rate || 0, // Use real data
                 language: primaryChatbot.language || 'en',
                 welcomeMessage: primaryChatbot.welcome_message || 'Hello! How can I help you today?',
                 fallbackMessage: primaryChatbot.fallback_message || 'I apologize, but I need more information to help you.'
@@ -131,7 +193,7 @@ const TourVirtuali = ({
               createdAt: project.created_at || new Date().toISOString(),
               lastActivity: project.updated_at || new Date().toISOString()
             };
-          });
+          }).filter(project => project !== null); // Remove null projects
           
           setClientProjects(transformedProjects);
         } else {
@@ -145,6 +207,90 @@ const TourVirtuali = ({
       setClientProjects([]);
     }
   }, [isLoading, clients, projects, chatbots, analytics]);
+
+  // Set up real-time subscriptions for projects
+  useEffect(() => {
+    if (!user?.id) return;
+
+    console.log('[TourVirtuali] Setting up real-time subscriptions');
+
+    const channel = supabase
+      .channel(`tour-virtuali-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'projects',
+        },
+        (payload) => {
+          console.log('[TourVirtuali] Project change detected:', payload);
+          debouncedRefresh();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'end_clients',
+        },
+        (payload) => {
+          console.log('[TourVirtuali] Client change detected:', payload);
+          debouncedRefresh();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chatbots',
+        },
+        (payload) => {
+          console.log('[TourVirtuali] Chatbot change detected:', payload);
+          debouncedRefresh();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'analytics',
+        },
+        (payload) => {
+          console.log('[TourVirtuali] Analytics change detected:', payload);
+          debouncedRefresh();
+        }
+      )
+      .subscribe((status) => {
+        console.log('[TourVirtuali] Subscription status:', status);
+      });
+
+    channelRef.current = channel;
+
+    return () => {
+      console.log('[TourVirtuali] Cleaning up real-time subscriptions');
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+      }
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+    };
+  }, [user?.id]);
+
+  const debouncedRefresh = () => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+    
+    debounceTimeoutRef.current = setTimeout(() => {
+      console.log('[TourVirtuali] Triggering debounced refresh');
+      refreshData();
+    }, 1000);
+  };
 
   const handleCreateRequest = (project: any) => {
     if (onCreateRequest) {
@@ -164,10 +310,13 @@ const TourVirtuali = ({
   };
 
   const handleNewProjectCreated = async (newProject: any) => {
-    // Refresh data from database to get the latest projects
-    await refreshData();
-    // Close modal
+    console.log('[TourVirtuali] New project created:', newProject);
+    // Close modal first
     setIsNewProjectModalOpen(false);
+
+    // Refresh data immediately to show new project
+    console.log('[TourVirtuali] Refreshing data to show new project...');
+    refreshData();
   };
 
   const handleSharePortal = (project: any) => {
@@ -185,38 +334,114 @@ const TourVirtuali = ({
   };
 
   const handleEditProject = (project: any) => {
-    // Open edit modal or navigate to edit page
-    console.log('Edit project:', project);
-    // For demo purposes, we'll just show an alert
-    alert(`Edit project: ${project.project.title}\nClient: ${project.client.name}\nCompany: ${project.client.company}`);
+    // Open edit client modal
+    console.log('Edit client for project:', project);
+    console.log('Project client data:', project.client);
+    console.log('Client ID:', project.client?.id);
+    console.log('Client name:', project.client?.name);
+    
+    if (!project.client || !project.client.id) {
+      console.error('Invalid client data:', project.client);
+      toast({
+        title: 'Error',
+        description: 'Invalid client data. Cannot edit.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setSelectedClientForEdit(project.client);
+    setIsEditClientModalOpen(true);
+  };
+
+  const handleCloseEditClientModal = () => {
+    setIsEditClientModalOpen(false);
+    setSelectedClientForEdit(null);
+  };
+
+  const handleClientUpdated = async () => {
+    // Refresh data to reflect changes
+    await refreshData();
   };
 
 
   const { toast } = useToast();
 
-  const handleDeleteProject = async (project: any) => {
-    const confirmed = window.confirm(
-      `Delete project "${project.project?.title || 'Untitled'}" for ${project.client?.name || 'this client'}? This will remove associated chatbots, analytics, requests, and assets.`
+  // Show loading if auth is still loading
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+      </div>
     );
-    if (!confirmed) return;
+  }
+
+  // Show error state with helpful message
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center max-w-md p-8">
+          <div className="text-red-600 mb-4">⚠️ Error loading dashboard</div>
+          <p className="text-gray-600 mb-4">{error}</p>
+          {isDevMode() && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded p-4 text-left text-sm">
+              <p className="font-semibold mb-2">Dev Mode Debug Info:</p>
+              <p className="text-xs">User ID: {user?.id || 'No user'}</p>
+              <p className="text-xs mt-2">This might be caused by:</p>
+              <ul className="text-xs list-disc ml-4 mt-1">
+                <li>Missing creator record in database</li>
+                <li>Database connection issue</li>
+                <li>Invalid authentication state</li>
+              </ul>
+            </div>
+          )}
+          <Button onClick={handleRefresh} className="mt-4">
+            Try Again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const handleDeleteProject = (project: any) => {
+    setProjectToDelete(project);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const confirmDeleteProject = async () => {
+    if (!projectToDelete) return;
 
     try {
-      setDeletingProjectId(project.id);
+      setDeletingProjectId(projectToDelete.id);
+      console.log('🗑️ Deleting project:', projectToDelete.id);
+      
       const { error } = await supabase
         .from('projects')
         .delete()
-        .eq('id', project.id);
+        .eq('id', projectToDelete.id);
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Delete error:', error);
+        throw error;
+      }
+
+      console.log('✅ Project deleted successfully from database');
 
       toast({
         title: 'Project deleted',
         description: 'The project and its related data were removed successfully.'
       });
 
-      await refreshData();
+      // Close the dialog immediately
+      setProjectToDelete(null);
+      setIsDeleteDialogOpen(false);
+      
+      // Refresh the data to update the UI immediately
+      console.log('🔄 Refreshing data to update UI...');
+      refreshData();
+
     } catch (err) {
-      console.error('Error deleting project:', err);
+      console.error('❌ Error deleting project:', err);
       toast({
         title: 'Delete failed',
         description: 'We could not delete this project. Please try again.',
@@ -225,6 +450,11 @@ const TourVirtuali = ({
     } finally {
       setDeletingProjectId(null);
     }
+  };
+
+  const cancelDeleteProject = () => {
+    setProjectToDelete(null);
+    setIsDeleteDialogOpen(false);
   };
 
   const handleStatusChange = (projectId: string, newStatus: string) => {
@@ -246,10 +476,18 @@ const TourVirtuali = ({
     return matchesSearch && matchesStatus;
   });
 
+  // Calculate real dashboard statistics from actual data
   const totalViews = clientProjects.reduce((sum, project) => sum + (project.analytics?.totalViews || 0), 0);
   const totalVisitors = clientProjects.reduce((sum, project) => sum + (project.analytics?.uniqueVisitors || 0), 0);
   const activeProjects = clientProjects.filter(project => project.project?.status === 'active').length;
-  const totalChatbots = clientProjects.filter(project => project.chatbot?.isActive).length;
+  const totalChatbots = clientProjects.filter(project => project.chatbot).length;
+  const totalConversations = clientProjects.reduce((sum, project) => sum + (project.chatbot?.conversations || 0), 0);
+  const avgSatisfaction = clientProjects.length > 0 
+    ? clientProjects.reduce((sum, project) => sum + (project.chatbot?.satisfaction || 0), 0) / clientProjects.length 
+    : 0;
+  const conversionRate = totalViews > 0 
+    ? clientProjects.reduce((sum, project) => sum + (project.analytics?.conversionRate || 0), 0) / clientProjects.length 
+    : 0;
 
   // Show error state if there's an error
   if (error) {
@@ -266,8 +504,44 @@ const TourVirtuali = ({
     );
   }
 
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="space-y-8">
+        {/* Header Skeleton */}
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+          <div className="space-y-2">
+            <div className="h-8 w-64 bg-gray-200 rounded animate-pulse"></div>
+            <div className="h-4 w-96 bg-gray-200 rounded animate-pulse"></div>
+          </div>
+          <div className="h-10 w-32 bg-gray-200 rounded animate-pulse"></div>
+        </div>
+
+        {/* Stats Cards Skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-24 bg-gray-200 rounded-lg animate-pulse"></div>
+          ))}
+        </div>
+
+        {/* Filters Skeleton */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="h-10 flex-1 bg-gray-200 rounded animate-pulse"></div>
+          <div className="h-10 w-32 bg-gray-200 rounded animate-pulse"></div>
+        </div>
+
+        {/* Projects Grid Skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <ProjectCardSkeleton key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
       <div>
@@ -277,13 +551,23 @@ const TourVirtuali = ({
           </p>
         </div>
           
-          <Button 
-          className="bg-primary hover:bg-primary-hover"
-          onClick={() => setIsNewProjectModalOpen(true)}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          New Project
-                </Button>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline"
+              onClick={handleRefresh}
+              disabled={isLoading}
+            >
+              <Activity className="h-4 w-4 mr-2" />
+              {isLoading ? 'Refreshing...' : 'Refresh'}
+            </Button>
+            <Button 
+              className="bg-primary hover:bg-primary-hover"
+              onClick={() => setIsNewProjectModalOpen(true)}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              New Project
+            </Button>
+          </div>
                             </div>
 
       {/* Overview Stats */}
@@ -322,7 +606,7 @@ const TourVirtuali = ({
         <CardContent>
             <div className="text-2xl font-bold">{totalChatbots}</div>
             <p className="text-xs text-muted-foreground">
-              {clientProjects.length - totalChatbots} pending setup
+              {totalConversations.toLocaleString()} conversations
             </p>
           </CardContent>
         </Card>
@@ -333,12 +617,12 @@ const TourVirtuali = ({
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0.0/5</div>
+            <div className="text-2xl font-bold">{avgSatisfaction}/5</div>
             <p className="text-xs text-muted-foreground">
-              Based on chatbot interactions
+              {conversionRate}% conversion rate
             </p>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Filters and Search */}
@@ -369,31 +653,7 @@ const TourVirtuali = ({
 
       {/* Client Projects Grid */}
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Card key={i} className="animate-pulse">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-muted rounded-full"></div>
-                  <div className="space-y-2">
-                    <div className="h-4 bg-muted rounded w-3/4"></div>
-                    <div className="h-3 bg-muted rounded w-1/2"></div>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div className="h-3 bg-muted rounded w-full"></div>
-                  <div className="h-3 bg-muted rounded w-2/3"></div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="h-8 bg-muted rounded"></div>
-                    <div className="h-8 bg-muted rounded"></div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <OptimizedLoading type="dashboard" message="Loading your projects and clients..." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredProjects.map((project) => (
@@ -476,6 +736,54 @@ const TourVirtuali = ({
           </div>
         </div>
       )}
+
+      {/* Edit Client Modal */}
+      <EditClientModal
+        isOpen={isEditClientModalOpen}
+        onClose={handleCloseEditClientModal}
+        client={selectedClientForEdit}
+        onClientUpdated={handleClientUpdated}
+      />
+
+      {/* Delete Project Confirmation Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Project</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{projectToDelete?.project?.title || 'Untitled'}" for {projectToDelete?.client?.name || 'this client'}? 
+              <br /><br />
+              <strong>This action cannot be undone.</strong> This will permanently remove:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>The project and all its data</li>
+                <li>Associated chatbots</li>
+                <li>Analytics and reports</li>
+                <li>Client requests</li>
+                <li>Uploaded assets</li>
+              </ul>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={cancelDeleteProject}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmDeleteProject}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deletingProjectId !== null}
+            >
+              {deletingProjectId ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete Project'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );

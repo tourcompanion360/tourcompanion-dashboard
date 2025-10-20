@@ -16,7 +16,7 @@ interface PhotoAlbumProps {
 const PhotoAlbum = ({ category, onClose }: PhotoAlbumProps) => {
   // Production ready - No sample data
   // Production ready - show empty state
-  const photos: any[] = [];
+  const photos: unknown[] = [];
 
   return (
     <div className="fixed inset-0 bg-background-overlay backdrop-blur-xl z-50 animate-fade-in">

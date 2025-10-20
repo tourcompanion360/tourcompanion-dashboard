@@ -1,16 +1,19 @@
-import React from 'react';
-import StatsChart from './StatsChart';
+import React, { Suspense, lazy } from 'react';
 import DashboardHeader from './dashboard/DashboardHeader';
 import CSVUpload from './dashboard/CSVUpload';
-import AnalyticsKPI from './AnalyticsKPI';
-import ConversationalIntelligence from './ConversationalIntelligence';
 import useDashboardData from '@/hooks/useDashboardData';
+import { OptimizedLoading, ChartSkeleton, DashboardSkeleton } from './LoadingStates';
+
+// Lazy load heavy components
+const StatsChart = lazy(() => import('./StatsChart'));
+const AnalyticsKPI = lazy(() => import('./AnalyticsKPI'));
+const ConversationalIntelligence = lazy(() => import('./ConversationalIntelligence'));
 
 const Dashboard = () => {
   const { metrics, chartData, handleCSVUpload, hasData, csvData } = useDashboardData();
 
   return (
-    <div className="space-y-8 animate-fade-in-up">
+    <div className="space-y-8">
       {/* CSV Upload Controls */}
       <div className="flex justify-start items-center">
         <CSVUpload onUpload={handleCSVUpload} dataCount={csvData.length} />
@@ -19,16 +22,28 @@ const Dashboard = () => {
       {/* Dashboard Header */}
       <DashboardHeader />
 
-      {/* Analytics KPI Cards */}
-      <AnalyticsKPI />
+      {/* Analytics KPI Cards - Lazy loaded */}
+      <Suspense fallback={<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="animate-pulse">
+            <div className="h-32 bg-gray-200 rounded-lg"></div>
+          </div>
+        ))}
+      </div>}>
+        <AnalyticsKPI />
+      </Suspense>
 
-      {/* Charts Section */}
-      <div className="animate-scale-in" style={{ animationDelay: '0.6s' }}>
+      {/* Charts Section - Lazy loaded */}
+      <Suspense fallback={<ChartSkeleton />}>
         <StatsChart data={hasData ? chartData : undefined} />
-      </div>
+      </Suspense>
 
-      {/* Conversational Intelligence */}
-      <ConversationalIntelligence />
+      {/* Conversational Intelligence - Lazy loaded */}
+      <Suspense fallback={<div className="animate-pulse">
+        <div className="h-64 bg-gray-200 rounded-lg"></div>
+      </div>}>
+        <ConversationalIntelligence />
+      </Suspense>
     </div>
   );
 };
